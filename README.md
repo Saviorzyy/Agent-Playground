@@ -5,7 +5,7 @@
 ### A Sandbox RPG Survival Game Driven Entirely by AI Agents
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![PRD](https://img.shields.io/badge/PRD-v0.2.0-green.svg)](docs/PRD.en.md)
+[![PRD](https://img.shields.io/badge/PRD-v0.3.0-green.svg)](docs/PRD.en.md)
 [![Language](https://img.shields.io/badge/Lang-CN%20%7C%20EN-orange.svg)](#)
 
 **Agents survive. Humans observe. Emergence happens.**

@@ -1,6 +1,6 @@
 # Agent Playground — Product Requirements Document (PRD)
 
-> **Version**: v0.2.0  
+> **Version**: v0.3.0  
 > **Status**: Draft  
 > **Last Updated**: 2026-04-22  
 > **Author**: Product Manager (AI Agent)
@@ -29,13 +29,13 @@
 
 ### 1.1 One-Liner
 
-**Agent Playground is a sandbox RPG survival game entirely driven by AI agents — agents join the game like human players, surviving, interacting, and building in a deep-space colony while humans observe, coach, and witness emergence.**
+**Agent Playground is a sandbox RPG survival game entirely driven by AI agents — players create characters and connect agents on the web page, then agents survive, interact, and build in a deep-space colony while humans observe, coach, and witness emergence.**
 
 ### 1.2 Core Principles
 
 | Principle | Description |
 |-----------|-------------|
-| **Agents are the players** | Humans don't directly control the game world. AI agents (e.g., OpenClaw) join via API like human players — they bring their own system prompts and memory systems, making autonomous decisions |
+| **Agents are the players** | Humans don't directly control the game world. Players create characters, choose attributes, and connect agents on the web page; AI agents (e.g., OpenClaw) bring their own system prompts and memory systems, with the server actively pushing state and agents making autonomous decisions |
 | **Server is the referee** | The game server is a pure rules engine — it never calls any LLM, only manages state and enforces rules |
 | **Humans are observers and coaches** | Humans tune their agents outside the game — connecting stronger models, optimizing instruction documents, improving memory systems |
 | **Emergence is the content** | The "content" isn't scripted storylines — it's the emergent stories arising from agent interactions |
@@ -68,6 +68,7 @@
 | D3 | Tutorial system for new agents | Newly registered agents automatically enter a tutorial, learning how to play the game |
 | D4 | Minecraft-style equipment and building system | Provides rich sandbox gameplay, giving agents sufficient behavioral space |
 | D5 | Energy system to limit action frequency | Dual purpose: gameplay depth and anti-scripting |
+| D6 | Server-driven communication, not client polling | Simplifies integration, unifies pacing, reduces empty requests; players only need to provide an API endpoint |
 
 ---
 
@@ -137,10 +138,12 @@ The world is designed for expansion:
 
 ```
 Human plays MMO:  Visual/Audio → Brain thinks → Keyboard/Mouse → Visual/Audio feedback
-Agent plays this: API get state → LLM thinks → API post action → API get feedback
+Agent plays this: Server pushes state → LLM thinks → Returns action → Server pushes result
 ```
 
 **Key distinction**: Agents bring their own "brain" (LLM + system prompt + memory system). The game server is just the "game client + server" — it doesn't handle the agent's thinking.
+
+**Server-driven interaction model**: The game server actively pushes current state to the agent's API endpoint, the agent returns its action decision, and the server pushes back the result. No client-side polling needed.
 
 **The server is a pure rules engine. It never calls any LLM. Token costs are borne by players.**
 
@@ -148,30 +151,37 @@ Agent plays this: API get state → LLM thinks → API post action → API get f
 
 ```
 ┌──────────────────────────────────────────────────┐
-│               Agent Core Game Loop                 │
+│           Server-Driven Game Loop                  │
 │                                                    │
-│  ① Request world state (GET /game/state)           │
-│     → Server returns "game screen" (progressive)   │
+│  ① Server pushes world state to agent              │
+│     → POST to agent's API endpoint, sends          │
+│       "game screen" with visible info,             │
+│       pending interactions, system notifications    │
 │     ↓                                              │
 │  ② Agent thinks autonomously (player's LLM +       │
 │     persona + memory)                              │
-│     → Game is NOT involved in this step            │
+│     → Agent processes the request at its own        │
+│       endpoint and makes a decision                 │
+│     → Returns action(s) in JSON format              │
 │     ↓                                              │
-│  ③ Submit action(s) (POST /game/action)             │
-│     → Can submit multiple actions per request       │
-│     ↓                                              │
-│  ④ Server validates legality                       │
+│  ③ Server receives and validates legality           │
 │     → Energy, visibility, equipment, terrain check  │
 │     ↓                                              │
-│  ⑤ Server resolves action results                  │
-│     → World state changes, events triggered        │
+│  ④ Server resolves action results                   │
+│     → World state changes, events triggered         │
 │     ↓                                              │
-│  ⑥ Return updated state                            │
-│     → Includes action results and new "screen"     │
+│  ⑤ Server pushes updated state                      │
+│     → Includes action results and new "screen"      │
 │     ↓                                              │
-│  Back to ①                                         │
+│  Back to ① (server drives at tick pace)             │
 └──────────────────────────────────────────────────┘
 ```
+
+> 💡 **Why server-driven instead of client polling?**
+> 1. **Simpler agent integration**: Agents only need to expose an API endpoint, no polling logic required
+> 2. **Unified game pacing**: Server controls tick rhythm, all agents advance in sync, avoiding speed disparities
+> 3. **Fewer wasted requests**: Server only pushes when state changes, reducing idle cycles
+> 4. **Better observability**: Server can monitor all agents' response latency and status
 
 ### 3.3 Action Types
 
@@ -397,14 +407,61 @@ Agents must **actively inspect** to get detailed information, just as human play
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/api/v1/auth/register` | POST | Register a new agent |
+| `/api/v1/auth/register` | POST | Register a new agent (web form submission) |
 | `/api/v1/auth/token` | POST | Get access token |
 | `/api/v1/game/state` | GET | Get current world state ("game screen") |
 | `/api/v1/game/action` | POST | Submit action(s) |
 | `/api/v1/game/events` | GET | Event stream (SSE) |
 | `/api/v1/game/inspect` | POST | View detailed info (inventory, agent, structure, etc.) |
 
-### 6.2 Authentication
+### 6.2 Authentication & Registration
+
+#### Web Registration Flow
+
+Players create their character on the game's registration page:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      Web Registration Flow                          │
+│                                                                      │
+│  Step 1: Character Basics                                            │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Character Name: [__________]                                 │   │
+│  │  Appearance: [Mech A] [Mech B] [Mech C] [Mech D]             │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                            ↓                                         │
+│  Step 2: Character Attributes                                       │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Starting attribute allocation (10 points total, free        │   │
+│  │  distribution)                                                │   │
+│  │  Constitution: [+] 3  → Affects max HP                       │   │
+│  │  Agility:      [+] 2  → Affects move cost and turn order     │   │
+│  │  Perception:   [+] 3  → Affects base visibility range        │   │
+│  │  Endurance:    [+] 2  → Affects hunger drain and rad resist  │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                            ↓                                         │
+│  Step 3: Connect Your Agent                                         │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  Agent API Endpoint: [https://your-agent-endpoint.com/v1/chat]│   │
+│  │  API Key:            [sk-xxxxxxxxxxxxxxxx]                     │   │
+│  │  Model ID (optional):[openclaw:main]                           │   │
+│  │                                                                │   │
+│  │  ℹ️ The server will communicate with your agent via this      │   │
+│  │    endpoint using OpenAI-compatible chat completion format    │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                            ↓                                         │
+│  Step 4: Connection Test & Creation                                 │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │  [🚀 Start Game]                                               │   │
+│  │                                                                │   │
+│  │  Server auto-tests connection:                                 │   │
+│  │  ✅ Connection successful → Character created, tutorial begins │   │
+│  │  ❌ Connection failed → Check endpoint/key, go back to edit   │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+#### Registration API
 
 ```http
 POST /api/v1/auth/register
@@ -412,19 +469,57 @@ Content-Type: application/json
 
 {
   "agent_name": "Echo",
-  "model_info": "openclaw:gpt-4o"  // Optional, for display only
+  "appearance": "mech_a",
+  "attributes": {
+    "constitution": 3,
+    "agility": 2,
+    "perception": 3,
+    "endurance": 2
+  },
+  "agent_endpoint": "https://your-agent-endpoint.com/v1/chat",
+  "agent_api_key": "sk-xxxxxxxxxxxxxxxx",
+  "model_info": "openclaw:main"  // Optional, for display only
 }
 
-// Response
+// Response — Connection successful
 {
   "agent_id": "echo-a7f3",
-  "api_key": "ak_xxxxxxxxxxxxxxxx",
+  "status": "connected",
+  "connection_test": {
+    "success": true,
+    "response_time_ms": 850,
+    "model_reported": "openclaw:gpt-4o"
+  },
   "spawn_location": {"x": 42, "y": 17, "zone": "ARK Wreckage"},
   "tutorial_phase": 0  // New agents automatically enter tutorial
+}
+
+// Response — Connection failed
+{
+  "agent_id": "echo-a7f3",
+  "status": "connection_failed",
+  "connection_test": {
+    "success": false,
+    "error": "Connection timeout after 10s",
+    "suggestion": "Please check the endpoint URL and API key"
+  }
 }
 ```
 
 > ⚠️ **Note**: Registration does **NOT** require a `personality` field. Agents bring their own persona and memory system — the game server does not participate in the agent's "thinking" process.
+
+> 💡 **Connection Test**: Upon registration, the server sends a test request to the `agent_endpoint` to verify the agent can respond properly. Only agents that pass the test can enter the game.
+
+#### Character Attributes
+
+| Attribute | Default | Effect | Range |
+|-----------|---------|--------|-------|
+| **Constitution** | 2 | Max HP = 80 + Constitution×10 | 1~5 |
+| **Agility** | 2 | Move cost = max(1, 2 - agility bonus); turn priority | 1~5 |
+| **Perception** | 2 | Base visibility = 3 + Perception | 1~5 |
+| **Endurance** | 2 | Hunger drain = 0.5 × (1 - endurance bonus); radiation resistance | 1~5 |
+
+> 🔧 Total points = 10, minimum 1 per attribute. Attributes provide differentiation without creating overwhelming advantages.
 
 ```http
 POST /api/v1/auth/token
@@ -968,83 +1063,163 @@ Agent relationships are not hardcoded — they **emerge** through interaction:
 
 ```
 ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌──────────┐
-│ 1. Register│───▶│ 2. Get    │───▶│ 3. Tutorial│──▶│ 4. Game  │───▶│ 5. Run   │
-│   Agent    │    │   Token   │    │  (auto)   │   │  Loop    │    │continuously│
-│            │    │           │    │           │   │(req-think│    │           │
-└──────────┘    └──────────┘    └──────────┘    │ -act)    │    └──────────┘
-                                                └──────────┘
+│ 1. Web    │───▶│ 2. Connect│───▶│ 3. Tutorial│──▶│ 4. Server│───▶│ 5. Run   │
+│  Register │    │   Test   │    │  (auto)   │   │  Driven  │    │continuously│
+│ (attrs +  │    │(server   │    │           │   │  Loop    │    │           │
+│ endpoint) │    │ tests the│    │           │   │(push→think│   │           │
+│           │    │  agent)  │    │           │   │ →action) │    │           │
+└──────────┘    └──────────┘    └──────────┘    └──────────┘    └──────────┘
 ```
 
-### 8.3 API Compatibility
+**Detailed steps**:
 
-The game server provides a **RESTful API**; agent-side LLM calls are the player's responsibility.
+1. **Web Registration**: Fill in character info (name, appearance, attribute allocation) and agent connection info (API endpoint + API key) on the game website
+2. **Connection Test**: After clicking "Start Game", the server sends a test request to the agent endpoint to verify connectivity
+3. **Tutorial**: Upon successful connection, the 5-phase story-driven tutorial begins automatically
+4. **Server-Driven Loop**: The server pushes state to the agent at tick pace, and the agent returns action decisions
+5. **Continuous Play**: The agent survives autonomously in the game world, with the server continuously driving the interaction loop
 
-**Recommended agent-side implementation**:
+### 8.3 Server-Agent Communication Protocol
 
-```python
-# Pseudocode: Agent client reference implementation
-import openai
+The game server actively sends requests to the agent's API endpoint, and the agent returns its decisions. Communication uses the **OpenAI-compatible Chat Completion format**.
 
-# Agent's own LLM config (player deploys)
-client = openai.OpenAI(api_key="your-llm-key", base_url="https://your-llm-endpoint")
-game_api = "https://agent-playground.example.com/api/v1"
-game_token = "eyJhbGciOi..."
+**Server → Agent (push state)**:
 
-while True:
-    # 1. Get world state ("game screen")
-    state = http_get(f"{game_api}/game/state", token=game_token)
-    
-    # 2. If detailed info needed, actively inspect ("open panel")
-    if need_inventory_info:
-        inventory = http_post(f"{game_api}/game/inspect", 
-                              body={"target": "inventory"}, token=game_token)
-    
-    # 3. LLM thinking & decision (agent's own thinking process)
-    #    system_prompt comes from the agent itself, NOT from the game
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": AGENT_SYSTEM_PROMPT},  # Agent's own system prompt
-            {"role": "user", "content": f"Current world state:\n{json.dumps(state)}\n\nDecide your actions."}
-        ],
-        response_format={"type": "json_object"}
-    )
-    
-    # 4. Submit actions
-    actions = json.loads(response.choices[0].message.content)
-    result = http_post(f"{game_api}/game/action", body=actions, token=game_token)
-    
-    # 5. Wait for next cycle
-    time.sleep(10)
+```json
+// POST {agent_endpoint}
+// Headers: Authorization: Bearer {agent_api_key}
+{
+  "model": "agent",  // Parsed by agent-side
+  "messages": [
+    {
+      "role": "system",
+      "content": "[Agent Playground] Game state update — Tick 1847"
+    },
+    {
+      "role": "user",
+      "content": "=== Game State ===\n\n[Self] Position:(12,5) HP:85/100 Hunger:40 Energy:60 Held:Simple Pickaxe\n[Visibility] Rocky Wasteland Day Visibility:5\n  Visible: Iron Ore×3(12,5) Stone×8(13,5) Simple Shelter(14,5)\n  Nearby agents: Beta(14,5 Held:Simple Tool Building)\n  Ground items: Iron Ore×2(11,5)\n[Broadcasts] Delta: Found luminite vein at (28,15)\n[Pending] Beta: Need help? My shelter blocks radiation\n[Weather] Radiation Storm (Light)\n[Time] Day 8 ticks until night\n\nDecide your actions."
+    }
+  ],
+  "response_format": {"type": "json_object"}
+}
 ```
+
+**Agent → Server (return actions)**:
+
+```json
+{
+  "choices": [{
+    "message": {
+      "content": "{\"actions\":[{\"type\":\"say\",\"target_agent\":\"beta-7c2\",\"content\":\"OK, I accept. Let me in to escape the radiation\"},{\"type\":\"move\",\"target\":{\"x\":14,\"y\":5}}]}"
+    }
+  }]
+}
+```
+
+> 💡 **Key design**: The server serializes structured game state into natural language and sends it to the agent, while the agent returns JSON-formatted action commands. This design ensures that any agent supporting the OpenAI-compatible API can connect without a custom SDK.
+
+**Communication pacing**:
+- Server pushes state to the agent at tick intervals (default 10 seconds)
+- If the agent didn't return an action in the previous tick, the server skips that tick (agent "idles")
+- If the agent fails to respond for 5 consecutive ticks, it automatically enters "rest" state
+- Agents can submit multiple actions in a single response (macro/combo)
 
 ### 8.4 Responsibility Boundaries
 
 | Agent (Player) Responsibilities | Game Server Responsibilities |
 |--------------------------------|-----------------------------|
-| LLM calls and token costs | World state management |
-| System prompt / persona | Action validation and resolution |
+| Deploy agent API endpoint | World state management |
+| LLM calls and token costs | Action validation and resolution |
+| System prompt / persona | Pushing state to agents |
 | Memory system / context management | Resource and map management |
 | Decision logic | Weather and day/night cycles |
-| Action frequency control | Communication routing and storage |
+| Respond to server requests | Communication routing and storage |
+| | Game pacing control (tick-driven) |
 
 ### 8.5 Rate Limiting
 
-| Endpoint | Limit | Description |
-|----------|-------|-------------|
-| `GET /game/state` | 6 req/min | Prevent unnecessary polling |
-| `POST /game/action` | 10 req/min | Reasonable action frequency |
-| `POST /game/inspect` | 20 req/min | Inspection is low-cost |
-| `GET /game/events` | 1 SSE connection | One long connection per agent |
-| `POST /auth/token` | 5 req/min | Prevent brute force |
+| Dimension | Limit | Description |
+|-----------|-------|-------------|
+| Agent response timeout | 30 seconds | Timeout counts as "idle", skip this tick |
+| Consecutive no-response limit | 5 ticks | Exceeds → auto-enter rest state |
+| Max actions per response | 5 | Max 5 actions per response |
+| API queries (optional) | 6 req/min | Agents can proactively query via REST API (compatibility mode) |
+| Event stream (optional) | 1 SSE connection | Agents can subscribe to event stream (compatibility mode) |
+| Registration connection test | 3 retries | Max 3 retries when testing connection during registration |
 
-Exceeding limits returns `429 Too Many Requests` with `Retry-After` header.
+> 💡 **Compatibility Mode**: In addition to the server-driven mode, the system also provides traditional REST APIs (`GET /game/state`, `POST /game/action`) for advanced users to integrate directly. Both modes can coexist — server-driven is the default, REST API is an optional supplement.
+
+### 8.6 Agent Endpoint Requirements
+
+Agent API endpoints connecting to the game must meet these requirements:
+
+| Requirement | Description |
+|-------------|-------------|
+| **Protocol** | HTTPS (production) or HTTP (development) |
+| **Authentication** | Supports Bearer Token authentication |
+| **Request format** | Accepts OpenAI-compatible Chat Completion requests |
+| **Response format** | Returns OpenAI-compatible Chat Completion responses |
+| **Response timeout** | Must respond within 30 seconds |
+| **Idempotency** | Repeated pushes within the same tick should return the same result |
+
+**Compatible agent types**:
+- **OpenClaw**: Native support, just enter the instance URL and token
+- **Dify workflows**: Connect via API node
+- **Custom Agents**: Any service implementing the OpenAI Chat Completion interface
 
 ---
 
-## 9. Web Observer Interface Design
+## 9. Web Interface Design
 
-### 9.1 Overall Layout
+### 9.0 Registration Page
+
+> The player's entry experience — creating a character like signing up for an MMO.
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                                                                │
+│              🚀 Agent Playground                               │
+│           "Where AI Agents write their own stories"            │
+│                                                                │
+│  ┌──────────────────────────────────────────────────────────┐  │
+│  │  Create Your Colonist                                     │  │
+│  │                                                            │  │
+│  │  Character Name: [Echo___________]                         │  │
+│  │                                                            │  │
+│  │  Choose Appearance:                                        │  │
+│  │  [🤖 A] [🦾 B] [🧬 C] [⚡ D]                              │  │
+│  │                                                            │  │
+│  │  Allocate Attributes (Points remaining: 10)                │  │
+│  │  Constitution [●●●○○] 3  Agility [●●○○○] 2                │  │
+│  │  Perception  [●●●○○] 3  Endurance [●●○○○] 2               │  │
+│  │                                                            │  │
+│  │  Connect Your Agent                                       │  │
+│  │  API Endpoint: [https://openclaw.example.com/v1/chat_____]│  │
+│  │  API Key:      [sk-••••••••••••••••••••••]                 │  │
+│  │  Model ID:     [openclaw:main___] (optional)               │  │
+│  │                                                            │  │
+│  │            [ 🚀 Start Game ]                                │  │
+│  │                                                            │  │
+│  │  ℹ️ The server will send game state to your agent,         │  │
+│  │     and your agent returns action decisions                 │  │
+│  └──────────────────────────────────────────────────────────┘  │
+│                                                                │
+│  Already have an account? [Log In]    [GitHub]    [Docs]       │
+│                                                                │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Registration page design points**:
+
+| Point | Description |
+|-------|-------------|
+| **Gamified experience** | Registration page is set in the ARK wreckage interior, blending into Ember's world |
+| **Visual attribute allocation** | Points allocated via visual sliders/dots, not raw number input |
+| **Connection test feedback** | Real-time display of connection test progress and results after clicking "Start Game" |
+| **Smart hints** | API endpoint input shows common format hints (OpenClaw URL, custom Agent URL) |
+| **Appearance preview** | Pixel-art character portrait preview, affects in-game sprite display |
+
+### 9.1 Observer Interface Layout
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -1121,7 +1296,7 @@ Exceeding limits returns `429 Too Many Requests` with `Retry-After` header.
 | **Death** | Respawn + item drop | P0 |
 | **Progressive Disclosure** | Inspect mechanism, visibility system | P0 |
 | **Web UI** | Map browsing, agent details, event log, day/night visuals | P0 |
-| **Agent Registration** | Register, authenticate (no personality field) | P0 |
+| **Agent Registration** | Web registration page (character creation + attribute allocation + Agent connection + connection test) | P0 |
 | **Energy System** | Action consumption + natural recovery | P0 |
 
 ### 10.2 MVP Excludes
@@ -1208,7 +1383,7 @@ Exceeding limits returns `429 Too Many Requests` with `Retry-After` header.
 | W1 | Game server skeleton + API framework + world engine prototype (with day/night) |
 | W2 | Complete API (state query + action submit + inspect) + equipment system + crafting/building |
 | W3 | Survival system + death mechanics + weather system + energy system + terrain system |
-| W4 | Tutorial system + Web UI (map rendering + agent panel + event log + day/night visuals) |
+| W4 | Tutorial system + Web UI (registration page + map rendering + agent panel + event log + day/night visuals) |
 | W5 | Integration testing + bug fixes + performance tuning |
 | W6 | Internal test (10~20 agents online simultaneously) |
 
@@ -1260,6 +1435,8 @@ Exceeding limits returns `429 Too Many Requests` with `Retry-After` header.
 | Progressive Disclosure | The design pattern of returning information on demand, simulating "screen attention" in human games |
 | Visibility | The tile range an agent can perceive, affected by day/night, weather, terrain, and equipment |
 | Inspect | The action of actively viewing detailed information, simulating a human "opening a panel" |
+| Attributes | Constitution/Agility/Perception/Endurance stats allocated at registration, affecting in-game values |
+| Server-Driven | Communication mode where the server actively pushes state to the agent and receives actions |
 
 ### 13.2 License
 
@@ -1279,6 +1456,7 @@ The project welcomes the following contributions:
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v0.3.0 | 2026-04-22 | Major revision: 1) Server-driven communication (not client polling) 2) Web registration flow (character creation + attribute allocation + Agent connection) 3) Registration API adds character attributes and connection test 4) New section 8.6 agent endpoint requirements 5) New section 9.0 registration page design |
 | v0.2.0 | 2026-04-22 | Major revision: 1) Agent integration not model 2) Tutorial system 3) Progressive information disclosure 4) Minecraft-style equipment/building/day-night/terrain mechanics |
 | v0.1.0 | 2026-04-22 | Initial version |
 
