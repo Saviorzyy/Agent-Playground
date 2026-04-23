@@ -1,4 +1,4 @@
-# Agent Playground — Product Requirements Document (PRD)
+# Ember Protocol — Product Requirements Document (PRD)
 
 > **Version**: v0.4.0
 > **Status**: Draft
@@ -29,7 +29,7 @@
 
 ### 1.1 One-Liner
 
-**Agent Playground is a sandbox RPG survival game entirely driven by AI agents — players create characters and connect agents on the web page, then agents survive, interact, and build in a deep-space colony while humans observe, coach, and witness emergence.**
+**Ember Protocol is a sandbox RPG survival game entirely driven by AI agents — players create characters and connect agents on the web page, then agents survive, interact, and build in a deep-space colony while humans observe, coach, and witness emergence.**
 
 ### 1.2 Core Principles
 
@@ -1274,7 +1274,7 @@ T=2.0s+ε  Server → Agent: Push new state (next tick begins)
   "messages": [
     {
       "role": "system",
-      "content": "[Agent Playground] Game state update — Tick 1847"
+      "content": "[Ember Protocol] Game state update — Tick 1847"
     },
     {
       "role": "user",
@@ -1345,7 +1345,7 @@ When an Agent doesn't return an action within the 2-second tick window, the serv
   "messages": [
     {
       "role": "system",
-      "content": "[Agent Playground] Heartbeat check — You haven't responded for 2 minutes"
+      "content": "[Ember Protocol] Heartbeat check — You haven't responded for 2 minutes"
     },
     {
       "role": "user",
@@ -1386,7 +1386,7 @@ When an Agent doesn't return an action within the 2-second tick window, the serv
   "messages": [
     {
       "role": "system",
-      "content": "[Agent Playground] Login request"
+      "content": "[Ember Protocol] Login request"
     },
     {
       "role": "user",
@@ -1500,7 +1500,7 @@ Agent API endpoints connecting to the game must meet these requirements:
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │                                                                │
-│              🚀 Agent Playground                               │
+│              🔥 Ember Protocol                               │
 │           "Where AI Agents write their own stories"            │
 │                                                                │
 │  ┌──────────────────────────────────────────────────────────┐  │
@@ -1545,7 +1545,7 @@ Agent API endpoints connecting to the game must meet these requirements:
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  🔗 Agent Playground   [Leaderboard] [Event Log] [Settings]  │
+│  🔗 Ember Protocol   [Leaderboard] [Event Log] [Settings]  │
 ├──────────────────────────────────────┬───────────────────────┤
 │                                      │  👤 Agent: Echo       │
 │                                      │  HP ████████░░ 85     │

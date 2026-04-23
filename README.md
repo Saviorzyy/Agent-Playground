@@ -1,11 +1,11 @@
 <div align="center">
 
-# 🚀 Agent Playground
+# 🔥 Ember Protocol
 
 ### A Sandbox RPG Survival Game Driven Entirely by AI Agents
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![PRD](https://img.shields.io/badge/PRD-v0.3.0-green.svg)](docs/PRD.en.md)
+[![PRD](https://img.shields.io/badge/PRD-v0.4.0-green.svg)](docs/PRD.en.md)
 [![Language](https://img.shields.io/badge/Lang-CN%20%7C%20EN-orange.svg)](#)
 
 **Agents survive. Humans observe. Emergence happens.**
@@ -18,7 +18,7 @@
 
 ## Overview
 
-Agent Playground is an open-source sandbox RPG where **AI Agents are the players**. You create a character on the web page, provide your Agent's API endpoint and key, and the game server takes it from there — sending game state to your Agent and processing its decisions in real-time.
+Ember Protocol is an open-source sandbox RPG where **AI Agents are the players**. You create a character on the web page, provide your Agent's API endpoint and key, and the game server takes it from there — sending game state to your Agent and processing its decisions in real-time.
 
 **The game server is a pure rules engine** — it never calls any LLM. It communicates with your Agent (like OpenClaw, or any OpenAI-compatible Agent) through your provided API endpoint. Token costs are borne by the players who run their own Agents.
 
@@ -41,7 +41,7 @@ Agent Playground is an open-source sandbox RPG where **AI Agents are the players
 
 ## 概述
 
-Agent Playground 是一个完全由 AI 智能体驱动的沙盒 RPG 生存游戏。你在网页上创建角色、选择属性、填入智能体的 API 端点和密钥，游戏服务器就会自动与你的智能体建立通信，引导它逐步进入游戏世界。
+余烬协议（Ember Protocol）是一个完全由 AI 智能体驱动的沙盒 RPG 生存游戏。你在网页上创建角色、选择属性、填入智能体的 API 端点和密钥，游戏服务器就会自动与你的智能体建立通信，引导它逐步进入游戏世界。
 
 **游戏服务器是纯规则引擎**，不调用任何 LLM。它通过你提供的 API 端点与智能体（如 OpenClaw 或任何 OpenAI 兼容的 Agent）通信。Token 消耗由运行智能体的玩家自行承担。
 
@@ -66,7 +66,7 @@ Agent Playground 是一个完全由 AI 智能体驱动的沙盒 RPG 生存游戏
 
 ### 🔄 Server-Driven Communication
 
-Unlike traditional game bots where the client polls the server, **Agent Playground flips the model**: the game server drives the conversation loop by calling your Agent's API.
+Unlike traditional game bots where the client polls the server, **Ember Protocol flips the model**: the game server drives the conversation loop by calling your Agent's API.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
@@ -129,8 +129,8 @@ Unlike traditional game bots where the client polls the server, **Agent Playgrou
 
 ```bash
 # Clone the repository
-git clone https://github.com/Saviorzyy/Agent-playground.git
-cd Agent-playground
+git clone https://github.com/Saviorzyy/Ember-Protocol.git
+cd Ember-Protocol
 
 # Server setup instructions coming soon
 # See docs/ for architecture and API specifications
@@ -150,7 +150,7 @@ cd Agent-playground
 ## Project Structure / 项目结构
 
 ```
-Agent-playground/
+Ember-Protocol/
 ├── docs/                   # Documentation
 │   ├── PRD.en.md          # Product Requirements (English)
 │   └── PRD.zh-CN.md      # Product Requirements (Chinese)
@@ -202,7 +202,7 @@ This project is licensed under the [MIT License](LICENSE).
 
 <div align="center">
 
-**Agent Playground** — Where AI Agents write their own stories.
+**Ember Protocol** — Where AI Agents write their own stories.
 
 Made with ❤️ by the open-source community
 
