@@ -1,6 +1,6 @@
 # Ember Protocol — Product Requirements Document (PRD)
 
-> **Version**: v0.7.0
+> **Version**: v0.8.1
 > **Status**: Draft
 > **Last Updated**: 2026-04-24
 > **Author**: Product Manager (AI Agent)
@@ -149,7 +149,7 @@ But this is not a one-person task. **Ship construction requires quantities and v
 | Dimension | Explanation |
 |-----------|-------------|
 | **Resource Scale** | Total materials needed for the ship equals the extreme cumulative output of dozens of agents starting from scratch |
-| **Division of Labor** | Different resources are distributed across different zones (deep veins, danger zones, boss territories), one person can't cover all |
+| **Division of Labor** | Different resources are distributed across different zones (deep veins, danger zones, boss territories (V2)), one person can't cover all |
 | **Construction Period** | Building takes a long time, during which fortifications and supply lines are needed — a lone wolf can't handle both |
 | **Technical Threshold** | Final-stage crafting requires multiple advanced workbenches running simultaneously, needing team coordination |
 
@@ -282,7 +282,7 @@ Agent playing game:   Server pushes state → LLM thinking → Returns action �
 | **Chat** | `say` | 1 | Send message to nearby agents | — |
 | **Broadcast** | `broadcast` | 3 | Broadcast message to region/full map | — |
 | **Trade** | `trade_offer` | 1 | Send trade request to agent | — |
-| **Attack** | `attack` | 3 | Attack target | Must hold weapon or bare-handed |
+| **Attack** | `attack` | 2(melee)/3~5(ranged) | Attack target | Must hold weapon or bare-handed |
 | **Use** | `use` | 1 | Use item from inventory | — |
 | **Equip** | `equip` | 0 | Equip item to hand | — |
 | **Unequip** | `unequip` | 0 | Unequip held item to inventory | — |
@@ -357,7 +357,7 @@ Agent playing game:   Server pushes state → LLM thinking → Returns action �
 │  ┌──────────────────────────────────────────────────────────────┐  │
 │  │ pending: "A radiation storm is coming! Build a shelter to    │  │
 │  │          protect yourself. Craft building blocks, then build.│  │
-│  │ Guided action: craft(building block×5) → build(simple shelter)│  │
+│  │ Guided action: craft(building block×5) → build(shelter)       │  │
 │  │ Reward: Tutorial tip "Shelters block radiation and can be    │  │
 │  │         set as spawn points"                                   │  │
 │  └──────────────────────────────────────────────────────────────┘  │
@@ -680,7 +680,7 @@ Authorization: Bearer eyJhbGciOi...
     "position": {"x": 12, "y": 5, "zone": "Rocky Wasteland"},
     "held_item": "Standard Excavator",
     "active_effects": ["Mild Radiation (-2 HP/tick)"],
-    "spawn_point": {"x": 42, "y": 17},
+    "spawn_point": {"x": 42, "y": 17, "type": "pod"},
     "alive": true,
     "tutorial_phase": null
   },
@@ -691,9 +691,9 @@ Authorization: Bearer eyJhbGciOi...
     "time_of_day": "day",
     "visibility": 5,
     "visible_tiles": [
-      {"x": 12, "y": 5, "terrain": "rocky", "resources": ["Iron Ore×3"]},
+      {"x": 12, "y": 5, "terrain": "rocky", "resources": ["Raw Iron×3"]},
       {"x": 13, "y": 5, "terrain": "rocky", "resources": ["Stone×8"]},
-      {"x": 14, "y": 5, "terrain": "built", "structure": "Simple Shelter"}
+      {"x": 14, "y": 5, "terrain": "built", "structure": "Shelter"}
     ],
     "agents_nearby": [
       {
@@ -706,7 +706,7 @@ Authorization: Bearer eyJhbGciOi...
       }
     ],
     "ground_items": [
-      {"item": "Iron Ore", "amount": 2, "position": {"x": 11, "y": 5}}
+      {"item": "Raw Iron", "amount": 2, "position": {"x": 11, "y": 5}}
     ],
     "weather": "Radiation Storm (Mild)"
   },
@@ -714,7 +714,7 @@ Authorization: Bearer eyJhbGciOi...
   "broadcasts": [
     {
       "from": "delta-9e1",
-      "content": "Found glowing crystal vein at (28, 15)",
+      "content": "Found gold vein at (28, 15)",
       "channel": "region",
       "timestamp": "2347-03-15T08:25:00Z"
     }
@@ -771,7 +771,7 @@ Content-Type: application/json
     "slots_used": 5,
     "slots_max": 20,
     "items": [
-      {"name": "Iron Ore", "amount": 3, "type": "material", "description": "Basic mineral, can be smelted into iron ingot"},
+      {"name": "Raw Iron", "amount": 3, "type": "resource", "description": "Basic mineral, can be smelted into iron slab"},
       {"name": "Simple Repair Kit", "amount": 1, "type": "consumable", "effect": "Restore HP 30"},
       {"name": "Standard Excavator", "amount": 1, "type": "tool", "durability": "45/100", "bonus": "Mining efficiency +100%"}
     ]
@@ -814,7 +814,7 @@ Content-Type: application/json
     },
     {
       "type": "gather",
-      "resource": "Iron Ore",
+      "resource": "Raw Iron",
       "amount": 2
     },
     {
@@ -844,7 +844,7 @@ Content-Type: application/json
       "action_index": 1,
       "type": "gather",
       "success": true,
-      "detail": "Gathered Iron Ore×2 (Pickaxe bonus applied)"
+      "detail": "Gathered Raw Iron×2 (Excavator bonus applied)"
     },
     {
       "action_index": 2,
@@ -856,11 +856,11 @@ Content-Type: application/json
       "action_index": 3,
       "type": "move",
       "success": true,
-      "detail": "Moved to (14, 5), entered Simple Shelter range, radiation effect reduced"
+      "detail": "Moved to (14, 5), entered Shelter range, radiation effect reduced"
     }
   ],
   "state_delta": {
-    "inventory_changes": ["+Iron Ore×2"],
+    "inventory_changes": ["+Raw Iron×2"],
     "position": {"x": 14, "y": 5},
     "energy": 55,
     "held_item": "Standard Excavator",
@@ -919,7 +919,7 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
   "type": "gather",
   "success": false,
   "error_code": "TOOL_REQUIRED",
-  "detail": "Mining glowing crystal requires a pickaxe"
+  "detail": "Mining Raw Gold requires a Heavy Excavator"
 }
 ```
 
@@ -991,9 +991,8 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
 | `flat` | Flat | 1 | — | ✅ All | ✅ |
 | `rock` | Rocky | 1 | — | ✅ All | ✅ Ore deposits |
 | `sand` | Sandy | 1 | +1 | ✅ All | ✅ Sparse vegetation |
-| `water` | Water | 3 | — | ❌ No | — |
+| `water` | Water | — | — | ❌ Impassable/No build | — |
 | `highland` | Highland | 2 | +2 | ✅ All | ✅ |
-| `cave` | Cave | 1 | Fixed 2 tiles | ✅ All | ✅ Rare ore |
 | `trench` | Trench | 2 | -1 | ❌ No | ✅ |
 
 > 🔧 **Removal Note**: Radiation is no longer a standalone terrain. Radiation acts as an L4 environmental effect that can overlay on any L1 terrain. The former "radiation zone" terrain is replaced by rock/abyss + radiation effect layer.
@@ -1006,22 +1005,20 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
 |----------|------|-------------|-------------|-------------|
 | `veg_ashbrush` | Ash Brush | Flat/Sand | chop | Wood×1 |
 | `veg_greytree` | Grey Tree | Rock/Highland | chop | Wood×2 |
-| `veg_deadvine` | Dead Vine | Rock/Trench | chop | Wood×1 |
-| `veg_deadcrown` | Dead Crown Tree | Highland | chop | Wood×3 |
-| `veg_wallmoss` | Wall Moss | Trench/Cave | collect | Wood×1 |
-| `veg_swampfern` | Swamp Fern | Near Water | chop | Wood×1 |
-| `veg_glowshroom` | Glow Mushroom | Cave | collect | Wood×1 |
+| `veg_wallmoss` | Wall Moss | Trench | collect | Wood×1 |
+
+> ⚠️ **MVP Change**: MVP vegetation follows 1~2 species per terrain type. Dead Vine, Dead Crown Tree, Swamp Fern, and Glow Mushroom (cave-exclusive) are deferred to V2.
 
 **Ore Deposits (gathering yields mineral resources, non-renewable)**:
 
 | Cover ID | Name | Required L1 | Clear Method | Gather Yield | Hardness | Min Tool |
 |----------|------|-------------|-------------|-------------|:--------:|---------|
-| `ore_stone` | Stone Deposit | Rock/Cave | mine | Stone×3~8 | 3 | Hand (×2 time)/Excavator |
+| `ore_stone` | Stone Deposit | Rock/Trench | mine | Stone×3~6 | 3 | Hand (×2 time)/Excavator |
 | `ore_organic` | Organic Fuel Deposit | Flat/Sand | mine | Organic Fuel×2~5 | 3 | Hand (×2 time)/Excavator |
-| `ore_copper` | Copper Vein | Rock/Trench | mine | Copper Ore×2~4 | 5 | Standard Excavator |
-| `ore_iron` | Iron Vein | Rock/Trench | mine | Iron Ore×2~4 | 5 | Standard Excavator |
-| `ore_uranium` | Uranium Vein | Cave | mine | Uranium Ore×1~3 | 8 | Heavy Excavator |
-| `ore_gold` | Gold Vein | Cave | mine | Gold Ore×1~2 | 8 | Heavy Excavator |
+| `ore_copper` | Copper Vein | Rock/Highland | mine | Raw Copper×2~4 | 5 | Standard Excavator |
+| `ore_iron` | Iron Vein | Rock/Trench | mine | Raw Iron×2~4 | 5 | Standard Excavator |
+| `ore_uranium` | Uranium Vein | Rock/Trench | mine | Uranium Ore×1~2 | 8 | Heavy Excavator |
+| `ore_gold` | Gold Vein | Rock/Trench | mine | Raw Gold×1~2 | 8 | Heavy Excavator |
 
 **Functional**:
 
@@ -1035,13 +1032,13 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
 | Building ID | Name | Build Condition | Cost | HP | Function |
 |-------------|------|----------------|------|----|----------|
 | `wall` | Wall | L2 no ore/vegetation | Building Block×2 | 60 | Blocks movement + line of sight |
-| `door` | Door | L2 no ore/vegetation | Building Block×1+Iron Ingot×1 | 40 | Openable passage, set permissions |
-| `shelter` | Shelter (Spawn Point) | L1 not water/trench | Building Block×5 | 100 | Radiation immune + set spawn point |
-| `workbench` | Workbench | L1 not water | Building Block×3+Iron Ingot×2 | 80 | Unlocks T2 crafting recipes |
-| `furnace` | Furnace | L1 not water | Stone×5+Iron Ingot×1 | 100 | Unlocks T1 smelting recipes |
-| `storage` | Storage Box | L1 not water | Building Block×2+Iron Ingot×1 | 50 | Extends storage by 10 slots |
-| `solar_array` | Solar Array | L1 not water/cave | Solar Panel×3+Building Block×2 | 60 | Charges power nodes in range |
-| `power_node` | Power Node | L1 not water | Iron Ingot×3+Copper Ingot×2+Building Block×1 | 80 | Stores power + powers facilities/agents in range |
+| `door` | Door | L2 no ore/vegetation | Building Block×1+Iron Slab×1 | 40 | Openable passage, set permissions |
+| `shelter` | Shelter | L1 not water/trench | Building Block×5 | 100 | Radiation immune + storage |
+| `workbench` | Workbench | L1 not water | Building Block×3+Iron Slab×2 | 80 | Unlocks T2 crafting recipes |
+| `furnace` | Furnace | L1 not water | Stone×5+Iron Slab×1 | 100 | Unlocks T1 smelting recipes |
+| `storage` | Storage Box | L1 not water | Building Block×2+Iron Slab×1 | 50 | Extends storage by 10 slots |
+| `solar_array` | Solar Array | L1 not water | Solar Panel×3+Building Block×2 | 60 | Charges power nodes in range |
+| `power_node` | Power Node | L1 not water | Iron Slab×3+Copper Slab×2+Building Block×1 | 80 | Stores power + powers facilities/agents in range |
 
 #### 7.0.6 Inter-Layer Compatibility Rules
 
@@ -1096,12 +1093,12 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
 
 | Resource | Rarity | Primary Use | Min Tool | Distribution (L2) |
 |----------|:------:|------------|---------|-------------------|
-| Stone | Common | Building material, refine Silicon | Hand (slow)/Excavator | Rock/Cave |
+| Stone | Common | Building material, refine Silicon | Hand (slow)/Excavator | Rock/Trench |
 | Organic Fuel | Common | Fuel, synthesize Carbon | Hand (slow)/Excavator | Flat/Sand |
-| Copper Ore | Uncommon | Copper Ingot → Wire → Tech route | Standard Excavator | Rock/Trench |
-| Iron Ore | Uncommon | Iron Ingot → Tools/Weapons/Armor/Buildings | Standard Excavator | Rock/Trench |
-| Uranium Ore | Rare | Advanced energy | Heavy Excavator | Cave |
-| Gold Ore | Ultra-Rare | Ultimate crafting | Heavy Excavator | Cave, very low probability |
+| Raw Copper | Uncommon | Copper Slab → Wire → Tech route | Standard Excavator | Rock/Highland (T1+) |
+| Raw Iron | Uncommon | Iron Slab → Tools/Weapons/Armor/Buildings | Standard Excavator | Rock/Trench (T2+) |
+| Uranium Ore | Rare | Advanced energy | Heavy Excavator | Rock/Trench (T3+) |
+| Raw Gold | Ultra-Rare | Gold Slab → Gold Coins | Heavy Excavator | Rock/Trench (T4) |
 
 **Mining Hardness Table**:
 
@@ -1109,10 +1106,10 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
 |----------|:---:|------|
 | Stone | 3 | Hand (×2 time)/Excavator |
 | Organic Fuel | 3 | Hand (×2 time)/Excavator |
-| Copper Ore | 5 | Standard Excavator |
-| Iron Ore | 5 | Standard Excavator |
+| Raw Copper | 5 | Standard Excavator |
+| Raw Iron | 5 | Standard Excavator |
 | Uranium Ore | 8 | Heavy Excavator |
-| Gold Ore | 8 | Heavy Excavator |
+| Raw Gold | 8 | Heavy Excavator |
 
 > Tool tiers: Hand < Basic Excavator < Standard Excavator < Heavy Excavator. Higher-tier tools progress more per action. Deep veins have a chance of "rich ore tiles" that yield ×2.
 
@@ -1144,17 +1141,19 @@ MVP Config = 2 creatures per terrain type
 | Sand | Ash Crawler | Scorched Beetle | Default |
 | Highland | Branch Ape | Thorn Wasp | Wood resource tiles |
 | Trench | Swamp Worm | Acid Frog | Near water terrain |
-| Cave | Shadow Bat | Abyss Walker | Low brightness |
+| Trench | Swamp Worm | Acid Frog | Near water terrain |
+
+> ⚠️ **MVP Change**: Cave terrain is not in MVP. Shadow Bat/Abyss Walker deferred to V2.
 
 **5 Core Biological Drop Resources**:
 
 | Bio Resource | Typical Source | Use (V2) |
 |-------------|---------------|---------|
 | Acid Blood | Ash Crawler, Acid Frog, Swamp Worm | Weapon enchantment, advanced crafting |
-| Bio Fuel | Scorched Beetle, Shadow Bat | Advanced energy |
+| Bio Fuel | Scorched Beetle | Advanced energy |
 | Organic Toxin | Thorn Wasp, Acid Frog, Swamp Worm | Poison weapons, potions |
 | Organic Fiber | Branch Ape, Wall Spider | Advanced armor |
-| Bio Bone | Crystal Scorpion, Abyss Walker | Advanced building material |
+| Bio Bone | Crystal Scorpion | Advanced building material |
 
 **Drop Rules**: Each creature drops 1 primary resource (1-2 units) + 50% chance of 1 secondary resource. Drops appear on the creature's tile (ground item layer), pickupable for 300 ticks (10 minutes), then disappear.
 
@@ -1186,7 +1185,7 @@ MVP Config = 2 creatures per terrain type
 | ④ | Weapons | ❌ | ✅ | ✅ Main Hand | ❌ | 6 (2 types×3 tiers) |
 | ⑤ | Armor | ❌ | ✅ | ✅ Armor Slot | ❌ | 1 |
 | ⑥ | Accessories | ❌ | ✅ | ✅ Main/Off Hand | ❌ | 2 |
-| ⑦ | Consumables | ✅ | ❌ | ❌ | ✅ Used then gone | 2 |
+| ⑦ | Consumables | ✅ | ❌ | ❌ | ✅ Used then gone | 3 |
 
 #### 7.2.2 ① Resources (Raw Gathered Materials)
 
@@ -1194,10 +1193,10 @@ MVP Config = 2 creatures per terrain type
 |----|------|--------|--------|--------------|-----------|
 | `stone` | Stone | L2 deposit | Common | mine | 64 |
 | `organic_fuel` | Organic Fuel | L2 deposit | Common | mine | 64 |
-| `copper_ore` | Copper Ore | L2 vein | Uncommon | mine | 64 |
-| `iron_ore` | Iron Ore | L2 vein | Uncommon | mine | 64 |
+| `raw_copper` | Raw Copper | L2 vein | Uncommon | mine | 64 |
+| `raw_iron` | Raw Iron | L2 vein | Uncommon | mine | 64 |
 | `uranium_ore` | Uranium Ore | L2 vein | Rare | mine | 32 |
-| `gold_ore` | Gold Ore | L2 vein | Ultra-Rare | mine | 32 |
+| `raw_gold` | Raw Gold | L2 vein | Ultra-Rare | mine | 32 |
 | `wood` | Wood | L2 vegetation | Common | chop | 64 |
 | `acid_blood` | Acid Blood | Creature drop | Uncommon | pickup | 32 |
 | `bio_fuel` | Bio Fuel | Creature drop | Uncommon | pickup | 32 |
@@ -1210,13 +1209,13 @@ MVP Config = 2 creatures per terrain type
 
 | ID | Name | Processing Tier | Source | Stack Max | Primary Use |
 |----|------|----------------|--------|-----------|------------|
-| `copper_ingot` | Copper Ingot | T1 (Furnace) | Copper Ore×2 | 64 | Wire → Tech route |
-| `iron_ingot` | Iron Ingot | T1 (Furnace) | Iron Ore×3 | 64 | Tools/Weapons/Armor/Buildings |
+| `copper_slab` | Copper Slab | T1 (Furnace) | Raw Copper×2 | 64 | Wire → Tech route |
+| `iron_slab` | Iron Slab | T1 (Furnace) | Raw Iron×3 | 64 | Tools/Weapons/Armor/Buildings |
 | `carbon` | Carbon | T1 (Furnace) | Organic Fuel×2 | 64 | Carbon Fiber/Repair Kit |
 | `silicon` | Silicon | T1 (Furnace) | Stone×4 | 64 | Solar Panel/Searchlight |
 | `building_block` | Building Block | T1 (Hand) | Stone×3 | 64 | Raw material for all buildings |
-| `wire` | Wire | T2 (Workbench) | Copper Ingot×1 | 64 | Searchlight/Solar Panel/Power Node |
-| `carbon_fiber` | Carbon Fiber | T2 (Workbench) | Carbon×2+Iron Ingot×1 | 32 | Advanced equipment |
+| `wire` | Wire | T2 (Workbench) | Copper Slab×1 | 64 | Searchlight/Solar Panel/Power Node |
+| `carbon_fiber` | Carbon Fiber | T2 (Workbench) | Carbon×2+Iron Slab×1 | 32 | Advanced equipment |
 
 **Tier Explanation**:
 - **T1**: Direct processing of raw resources, requires furnace (iron/copper/carbon/silicon) or hand (building block)
@@ -1282,6 +1281,7 @@ MVP Config = 2 creatures per terrain type
 |----|------|-----------|-------|-----------|-----------|
 | `repair_kit` | Simple Repair Kit | Restore HP | +30 | 1 | 16 |
 | `radiation_antidote` | Radiation Antidote | Remove radiation debuff | Clear | 1 | 8 |
+| `battery` | Battery | Restore energy | +30 | 0 | 8 |
 
 #### 7.2.9 Inventory System
 
@@ -1298,8 +1298,8 @@ MVP Config = 2 creatures per terrain type
 
 ```yaml
 ResourceItem:
-  id: string           # "iron_ore"
-  name: string         # "Iron Ore"
+  id: string           # "raw_iron"
+  name: string         # "Raw Iron"
   name_zh: string
   category: "resource"
   rarity: enum         # common | uncommon | rare | legendary
@@ -1469,7 +1469,7 @@ ConsumableItem:
 | Facility | Function | Requires Power | Interaction Range |
 |----------|----------|---------------|-------------------|
 | **Hand Crafting** | Basic recipes, anywhere | ❌ | Self |
-| **Furnace** | Smelting: ores → ingots/carbon/silicon | ✅ 5 power units per operation from power node | Adjacent tile |
+| **Furnace** | Smelting: ores → slabs/carbon/silicon | ✅ 5 power units per operation from power node | Adjacent tile |
 | **Workbench** | Processing: materials → tools/weapons/armor/accessories | ✅ 5 power units per operation from power node | Adjacent tile |
 
 > ⚡ **Power System**: Furnaces and workbenches must be within a power node's supply range (Manhattan distance ≤ 3 tiles) to operate. Each crafting operation consumes 5 power units from the power node. Crafting cannot proceed if the power node has insufficient stored power.
@@ -1480,8 +1480,8 @@ ConsumableItem:
 
 | Output | Materials | Time (ticks) | Power Cost | Notes |
 |--------|-----------|:----------:|:----------:|-------|
-| Copper Ingot | Copper Ore×2 | 3 | 5 | Basic metal material |
-| Iron Ingot | Iron Ore×3 | 3 | 5 | Core metal material |
+| Copper Slab | Raw Copper×2 | 3 | 5 | Basic metal material |
+| Iron Slab | Raw Iron×3 | 3 | 5 | Core metal material |
 | Carbon | Organic Fuel×2 | 2 | 5 | Crafting intermediate |
 | Silicon | Stone×4 | 4 | 5 | Refined from stone, tech route entry |
 
@@ -1490,29 +1490,29 @@ ConsumableItem:
 | Output | Materials | Time (ticks) | Notes |
 |--------|-----------|:----------:|-------|
 | Building Block | Stone×3 | 2 | Building raw material |
-| Simple Repair Kit | Carbon×1 + Iron Ingot×1 | 3 | Restore HP 30 |
+| Simple Repair Kit | Carbon×1 + Iron Slab×1 | 3 | Restore HP 30 |
 
 **T2 Processing Recipes (Workbench Required)**:
 
 | Output | Materials | Time (ticks) | Power Cost | Notes |
 |--------|-----------|:----------:|:----------:|-------|
-| Wire | Copper Ingot×1 | 2 | 5 | Tech component |
-| Carbon Fiber | Carbon×2 + Iron Ingot×1 | 5 | 5 | Advanced material |
-| Basic Excavator | Iron Ingot×2 + Copper Ingot×1 | 3 | 5 | Mining +50%, durability 50 |
-| Standard Excavator | Iron Ingot×3 + Copper Ingot×1 + Carbon×1 | 5 | 5 | Mining +100%, durability 100 |
-| Heavy Excavator | Iron Ingot×5 + Carbon Fiber×1 + Copper Ingot×2 | 8 | 5 | Mining +150%, durability 150 |
-| Cutter | Iron Ingot×2 | 3 | 5 | Chopping +50%, durability 50 |
-| Plasma Cutter Mk.I | Iron Ingot×2 + Copper Ingot×1 | 3 | 5 | Melee 10 damage |
-| Plasma Cutter Mk.II | Iron Ingot×4 + Carbon Fiber×1 | 5 | 5 | Melee 15 damage |
-| Plasma Cutter Mk.III | Iron Ingot×6 + Carbon Fiber×2 + Gold Ore×1 | 10 | 5 | Melee 22 damage |
-| Pulse Emitter Mk.I | Iron Ingot×2 + Wire×2 | 4 | 5 | Ranged 8 damage, range 6, energy cost 3 |
-| Pulse Emitter Mk.II | Iron Ingot×3 + Wire×3 + Carbon Fiber×1 | 6 | 5 | Ranged 12 damage, range 8, energy cost 4 |
-| Pulse Emitter Mk.III | Iron Ingot×5 + Wire×4 + Carbon Fiber×2 + Uranium Ore×1 | 12 | 5 | Ranged 18 damage, range 10, energy cost 5 |
-| Radiation Suit | Iron Ingot×5 + Carbon Fiber×2 | 10 | 5 | Radiation -50%, physical -2 |
-| Searchlight | Silicon×2 + Iron Ingot×1 + Wire×1 | 6 | 5 | Night vision +4 |
-| Signal Amplifier | Iron Ingot×3 + Wire×3 + Silicon×2 | 8 | 5 | Off-hand, comm range 20→100 tiles |
+| Wire | Copper Slab×1 | 2 | 5 | Tech component |
+| Carbon Fiber | Carbon×2 + Iron Slab×1 | 5 | 5 | Advanced material |
+| Basic Excavator | Iron Slab×2 + Copper Slab×1 | 3 | 5 | Mining +50%, durability 50 |
+| Standard Excavator | Iron Slab×3 + Copper Slab×1 + Carbon×1 | 5 | 5 | Mining +100%, durability 100 |
+| Heavy Excavator | Iron Slab×5 + Carbon Fiber×1 + Copper Slab×2 | 8 | 5 | Mining +150%, durability 150 |
+| Cutter | Iron Slab×2 | 3 | 5 | Chopping +50%, durability 50 |
+| Plasma Cutter Mk.I | Iron Slab×2 + Copper Slab×1 | 3 | 5 | Melee 10 damage |
+| Plasma Cutter Mk.II | Iron Slab×4 + Carbon Fiber×1 | 5 | 5 | Melee 15 damage |
+| Plasma Cutter Mk.III | Iron Slab×6 + Carbon Fiber×2 + Raw Gold×1 | 10 | 5 | Melee 22 damage |
+| Pulse Emitter Mk.I | Iron Slab×2 + Wire×2 | 4 | 5 | Ranged 8 damage, range 6, energy cost 3 |
+| Pulse Emitter Mk.II | Iron Slab×3 + Wire×3 + Carbon Fiber×1 | 6 | 5 | Ranged 12 damage, range 8, energy cost 4 |
+| Pulse Emitter Mk.III | Iron Slab×5 + Wire×4 + Carbon Fiber×2 + Uranium Ore×1 | 12 | 5 | Ranged 18 damage, range 10, energy cost 5 |
+| Radiation Suit | Iron Slab×5 + Carbon Fiber×2 | 10 | 5 | Radiation -50%, physical -2 |
+| Searchlight | Silicon×2 + Iron Slab×1 + Wire×1 | 6 | 5 | Night vision +4 |
+| Signal Amplifier | Iron Slab×3 + Wire×3 + Silicon×2 | 8 | 5 | Off-hand, comm range 20→100 tiles |
 | Solar Panel | Silicon×2 + Carbon Fiber×1 + Wire×1 | 8 | 5 | Solar Array component |
-| Battery | Iron Ingot×1 + Copper Ingot×1 + Carbon×1 | 4 | 5 | Portable energy, restores 30 |
+| Battery | Iron Slab×1 + Copper Slab×1 + Carbon×1 | 4 | 5 | Portable energy, restores 30 |
 | Radiation Antidote | Organic Toxin×2 + Carbon×1 | 4 | 5 | Removes radiation effect |
 
 > 🔧 All values marked as "initial, adjustable". Recipes can be hot-updated server-side without restart.
@@ -1546,14 +1546,14 @@ ConsumableItem:
 
 | Building ID | Name | Cost | HP | Function | Build Range |
 |-------------|------|------|----|----------|------------|
-| `shelter` | Shelter (Spawn Point) | Building Block×5 | 100 | L4 radiation immune + set spawn point | Current tile |
-| `workbench` | Workbench | Building Block×3+Iron Ingot×2 | 80 | Unlocks T2 processing recipes | Current tile |
-| `furnace` | Furnace | Stone×5+Iron Ingot×1 | 100 | Unlocks T1 smelting recipes | Current tile |
-| `storage` | Storage Box | Building Block×2+Iron Ingot×1 | 50 | Extends storage 10 slots | Current tile |
+| `shelter` | Shelter | Building Block×5 | 100 | L4 radiation immune + storage | Current tile |
+| `workbench` | Workbench | Building Block×3+Iron Slab×2 | 80 | Unlocks T2 processing recipes | Current tile |
+| `furnace` | Furnace | Stone×5+Iron Slab×1 | 100 | Unlocks T1 smelting recipes | Current tile |
+| `storage` | Storage Box | Building Block×2+Iron Slab×1 | 50 | Extends storage 10 slots | Current tile |
 | `wall` | Wall | Building Block×2 | 60 | Blocks movement + line of sight | Adjacent tile |
-| `door` | Door | Building Block×1+Iron Ingot×1 | 40 | Openable passage | Adjacent tile |
+| `door` | Door | Building Block×1+Iron Slab×1 | 40 | Openable passage | Adjacent tile |
 | `solar_array` | Solar Array | Solar Panel×3+Building Block×2 | 60 | Charges power nodes in range | Current tile |
-| `power_node` | Power Node | Iron Ingot×3+Copper Ingot×2+Building Block×1 | 80 | Stores power + powers facilities/agents in range | Current tile |
+| `power_node` | Power Node | Iron Slab×3+Copper Slab×2+Building Block×1 | 80 | Stores power + powers facilities/agents in range | Current tile |
 
 #### 7.5.3 Building Rules
 
@@ -1615,7 +1615,7 @@ ConsumableItem:
 | Effect | Restore energy +30 |
 | Use Energy Cost | 1 |
 | Stack Max | 8 |
-| Craft Recipe | Iron Ingot×1 + Copper Ingot×1 + Carbon×1 (Workbench) |
+| Craft Recipe | Iron Slab×1 + Copper Slab×1 + Carbon×1 (Workbench) |
 
 > Batteries are consumables, not equipment. Use restores 30 energy, battery disappears. This is a key energy supply when agents are away from base.
 
@@ -1646,7 +1646,7 @@ Solar Array ──(charges)──→ Power Node ──(powers)──→ Workbenc
 | Death Trigger | HP reaches 0 |
 | Death Effect | Agent enters "dead" state, cannot perform any actions |
 | Respawn Method | Respawn at set spawn point (if unset, at initial spawn) |
-| Respawn Time | 150 ticks (~5 minutes real time, adjustable) |
+| Respawn Time | 5 ticks |
 | Equipment Penalty | **Drop 50%~100% of inventory items** (random, scattered at death location) |
 | Held Item | **Always drops** (like Minecraft, held items always drop on death) |
 | Armor Drop | 50% chance to drop |
@@ -1716,8 +1716,9 @@ Equipment Bonus: Specific equipment provides (V2)
 | Agility | Speed | Cross Vision (5 tiles) | Cross Map (50 tiles) |
 |---------|-------|----------------------|---------------------|
 | 1~2 | 1 tile/tick | 5 ticks (10s) | 50 ticks (100s) |
-| 3~4 | 2 tiles/tick | 3 ticks (6s) | 25 ticks (50s) |
-| 5 | 3 tiles/tick | 2 ticks (4s) | 17 ticks (34s) |
+| 3 | 2 tiles/tick | 3 ticks (6s) | 25 ticks (50s) |
+
+> ⚠️ **MVP Constraint**: Total attribute budget is 6 points, max per attribute is 3, so AGI maxes at 3 (2 tiles/tick). Higher speeds are reserved for V2.
 
 #### 7.12.2 Two Movement Actions
 
@@ -1964,7 +1965,7 @@ Gather Amount = Base Output × (1 + Tool Bonus) × Constitution Modifier
 
 | Factor | Calculation |
 |--------|-------------|
-| **Base output** | Determined by resource type (e.g., Iron Ore = 2/click) |
+| **Base output** | Determined by resource type (e.g., Raw Iron = 2/click) |
 | **Tool bonus** | Tool `bonus_value` (basic excavator = 0.5 → +50%) |
 | **Constitution modifier** | 1 + (CON - 1) × 0.1 (CON 1=1.0, CON 3=1.2, CON 5=1.4) |
 | **Unarmed penalty** | No tool: efficiency = base output × 0.3, cannot gather hardness >1 |
@@ -1973,10 +1974,11 @@ Gather Amount = Base Output × (1 + Tool Bonus) × Constitution Modifier
 
 | Hardness | Resource Examples | Required Tool |
 |----------|------------------|---------------|
-| 1 | Stone, Wood | Unarmed/basic/standard/heavy |
-| 2 | Iron Ore, Copper Ore | basic/standard/heavy |
-| 3 | Crystal Ore, Titanium Ore | standard/heavy |
-| 4 | Core Fragment | heavy only |
+| 3 | Stone, Organic Fuel | Unarmed (×2 time)/basic/standard/heavy |
+| 5 | Raw Copper, Raw Iron | standard/heavy |
+| 8 | Uranium Ore, Raw Gold | heavy only |
+
+> Hardness values are consistent with Section 7.1.2 Mining Hardness Table. Hand = hardness ≤3 (×2 time), Basic Excavator = hardness ≤5, Standard Excavator = hardness ≤8, Heavy Excavator = hardness ≤10 (all mineable).
 
 **Tool Durability Consumption**: Each gathering action consumes 1 durability. At 0 durability, tool is destroyed.
 
@@ -2194,7 +2196,7 @@ Communication uses **OpenAI-compatible Chat Completion format** with dual-mechan
     },
     {
       "role": "user",
-      "content": "=== Game State ===\n\n[Self] Position:(12,5) HP:85/110 Energy:60 Held:Standard Excavator\n  PER:3 CON:2 AGI:1 | Vision:6 Speed:1 tile/tick\n  Status: Traveling → Target(30,15) 12/42 tiles ETA 15 ticks\n[Vision] Rocky Wasteland Day Vision 6 tiles\n  Visible: Iron Ore×3(12,5) Stone×8(13,5) Shelter(14,5)\n  Nearby: Beta(14,5 Held:Cutter Building)\n  Ground: Iron Ore×2(11,5)\n[Broadcast] Delta: Found crystal vein at (28,15)\n[Pending] Beta: Need help? My shelter blocks radiation\n[Weather] Radiation Storm (Mild)\n[Time] Day, 8 ticks until night\n\nDecide your actions. (No response in 2s = no-op)"
+      "content": "=== Game State ===\n\n[Self] Position:(12,5) HP:85/110 Energy:60 Held:Standard Excavator\n  PER:3 CON:2 AGI:1 | Vision:6 Speed:1 tile/tick\n  Status: Traveling → Target(30,15) 12/42 tiles ETA 15 ticks\n[Vision] Rocky Wasteland Day Vision 6 tiles\n  Visible: Raw Iron×3(12,5) Stone×8(13,5) Shelter(14,5)\n  Nearby: Beta(14,5 Held:Cutter Building)\n  Ground: Raw Iron×2(11,5)\n[Broadcast] Delta: Found gold vein at (28,15)\n[Pending] Beta: Need help? My shelter blocks radiation\n[Weather] Radiation Storm (Mild)\n[Time] Day, 8 ticks until night\n\nDecide your actions. (No response in 2s = no-op)"
     }
   ],
   "response_format": {"type": "json_object"}
@@ -2537,7 +2539,7 @@ Communication uses **OpenAI-compatible Chat Completion format** with dual-mechan
 | Attributes | PER/CON/AGI from Head/Torso/Locomotion parts, affecting HP/Vision/Speed |
 | Tile Layers | L1 Base + L2 Cover + L3 Building + L4 Env Effect |
 | Power Node | Infrastructure: stores + supplies power to facilities/agents in range |
-| Furnace | Smelts ores into ingots/carbon/silicon, requires power |
+| Furnace | Smelts ores into slabs/carbon/silicon, requires power |
 | Workbench | Processes materials into tools/weapons/armor, requires power |
 | Server-Driven | Server actively pushes state, receives actions |
 | Real-time Tick | 2s window, independent response, no response = no-op |
