@@ -1,6 +1,6 @@
 # Ember Protocol — Product Requirements Document (PRD)
 
-> **Version**: v0.8.2
+> **Version**: v0.8.3
 > **Status**: Draft
 > **Last Updated**: 2026-04-24
 > **Author**: Product Manager (AI Agent)
