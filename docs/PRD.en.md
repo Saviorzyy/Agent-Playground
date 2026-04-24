@@ -1,6 +1,6 @@
 # Ember Protocol — Product Requirements Document (PRD)
 
-> **Version**: v0.6.0
+> **Version**: v0.7.0
 > **Status**: Draft
 > **Last Updated**: 2026-04-24
 > **Author**: Product Manager (AI Agent)
@@ -24,6 +24,8 @@
    - [7.4 Crafting System](#74-crafting-system)
    - [7.5 Building System](#75-building-system)
    - [7.6 Energy System](#76-energy-system)
+   - [7.14 Interaction & Combat System](#714-interaction--combat-system)
+   - [7.15 Radio Communication System](#715-radio-communication-system)
 8. [Agent Integration Specification](#8-agent-integration-specification)
 9. [Web Observer Interface Design](#9-web-observer-interface-design)
 10. [MVP Scope Definition](#10-mvp-scope-definition)
@@ -896,16 +898,17 @@ data: {"type": "server_restart", "eta_minutes": 30, "message": "Server maintenan
 
 ### 6.8 Communication System
 
-| Channel | Trigger | Range | Energy Cost | Async/Sync |
-|---------|---------|-------|-------------|------------|
-| Face-to-face chat | `say` | Same/adjacent tile | 1 | Async (like chat app) |
-| Region broadcast | `broadcast` + `channel: "region"` | Current region | 3 | Async |
-| Global broadcast | `broadcast` + `channel: "global"` | Full map | 10 | Async |
-| Group channel | `broadcast` + `channel: "group:xxx"` | Group members | 2 | Async |
-| Whisper | `whisper` | Specific agent (any distance) | 2 | Async |
-| Bulletin board | `post_note` | Current tile | 1 | Async (persistent) |
+> Ember's atmosphere has severe electromagnetic interference. Robots communicate via built-in short-wave radio modules (see 7.15 Radio Communication System). Face-to-face talk bypasses radio and is the only fully secure communication method.
 
-**All communication is asynchronous** — sender submits and gets immediate return; receiver sees message on next `GET /state` or SSE.
+| Channel | Trigger | Range | Energy Cost | Notes |
+|---------|---------|-------|-------------|-------|
+| Face-to-face | `talk` | Same tile | 0 | Bypasses radio, cannot be intercepted |
+| Radio Broadcast | `radio_broadcast` | 20 tiles (default) / 100 (Signal Amplifier) | 1 | All open-frequency agents in range |
+| Radio Direct | `radio_direct` | 20/100 tiles | 1 | Private message to specific agent |
+| Channel Message | `radio_channel_msg` | 20/100 tiles | 1 | Members in comm range receive |
+| Radio Scan | `radio_scan` | 20/100 tiles | 1 | Discover open-frequency agents nearby |
+
+> ⚠️ **v0.7.0 Rework**: Communication system restructured from traditional `say`/`broadcast`/`whisper` to a radio communication model. All cross-tile communication is limited by Ember's electromagnetic interference, effective range ~20 tiles.
 
 ### 6.9 Error Handling
 
@@ -1182,7 +1185,7 @@ MVP Config = 2 creatures per terrain type
 | ③ | Tools | ❌ | ✅ | ✅ Main Hand | ❌ | 4 |
 | ④ | Weapons | ❌ | ✅ | ✅ Main Hand | ❌ | 6 (2 types×3 tiers) |
 | ⑤ | Armor | ❌ | ✅ | ✅ Armor Slot | ❌ | 1 |
-| ⑥ | Accessories | ❌ | ✅ | ✅ Main/Off Hand | ❌ | 1 |
+| ⑥ | Accessories | ❌ | ✅ | ✅ Main/Off Hand | ❌ | 2 |
 | ⑦ | Consumables | ✅ | ❌ | ❌ | ✅ Used then gone | 2 |
 
 #### 7.2.2 ① Resources (Raw Gathered Materials)
@@ -1244,13 +1247,15 @@ MVP Config = 2 creatures per terrain type
 
 **Ranged Weapons — Pulse Emitter**:
 
-| ID | Name | Tier | Durability | Damage | Range | Special | Ammo/Condition | Equip Slot |
-|----|------|------|-----------|--------|-------|---------|---------------|-----------|
-| `pulse_emitter_mk1` | Pulse Emitter Mk.I | Basic | 60 | 8 | 4 tiles | — | Energy×2 | Main Hand |
-| `pulse_emitter_mk2` | Pulse Emitter Mk.II | Standard | 100 | 12 | 5 tiles | — | Energy×2 | Main Hand |
-| `pulse_emitter_mk3` | Pulse Emitter Mk.III | Heavy | 150 | 18 | 6 tiles | Hit: -1 speed/2 ticks | Energy×3 | Main Hand |
+| ID | Name | Tier | Durability | Damage | Range | Optimal | Effective | Extreme | Special | Energy Cost | Equip Slot |
+|----|------|------|-----------|--------|-------|---------|-----------|---------|---------|-------------|-----------|
+| `pulse_emitter_mk1` | Pulse Emitter Mk.I | Basic | 60 | 8 | 6 tiles | 1~2 | 3~4 | 5~6 | — | 3 | Main Hand |
+| `pulse_emitter_mk2` | Pulse Emitter Mk.II | Standard | 100 | 12 | 8 tiles | 1~3 | 4~6 | 7~8 | — | 4 | Main Hand |
+| `pulse_emitter_mk3` | Pulse Emitter Mk.III | Heavy | 150 | 18 | 10 tiles | 1~4 | 5~7 | 8~10 | Hit: -1 speed/2 ticks | 5 | Main Hand |
 
-**Unarmed Attack**: Damage 5, range 1 tile, no durability consumption.
+> ⚠️ **v0.7.0 Range Rework**: Pulse Emitter range expanded from 4/5/6 to 6/8/10 tiles, with new Optimal/Effective/Extreme distance falloff (see 7.14 Interaction & Combat System).
+
+**Unarmed Attack**: Damage 2, range 1 tile (adjacent), no attribute modifier, no durability consumption. The most basic self-defense — a weaponless robot can only bash with its mechanical chassis.
 
 > ⚠️ **Design Decision**: MVP has 1 melee weapon line and 1 ranged weapon line, each with 3 tiers (Basic/Standard/Heavy), forming a clear upgrade gradient. Ranged weapons consume energy instead of ammo, simplifying the MVP system. Weapons use sci-fi industrial naming.
 
@@ -1267,8 +1272,9 @@ MVP Config = 2 creatures per terrain type
 | ID | Name | Effect Type | Value | Durability | Equip Slot |
 |----|------|-----------|-------|-----------|-----------|
 | `searchlight` | Searchlight | Night Vision | +4 tiles | 200 | Main/Off Hand |
+| `signal_amplifier` | Signal Amplifier | Comm Range | 20→100 tiles | 200 | Off Hand |
 
-> Accessories differ from tools/weapons: accessories provide passive effects rather than active action bonuses. Searchlight automatically expands night vision when equipped, no extra action needed.
+> Accessories differ from tools/weapons: accessories provide passive effects rather than active action bonuses. Searchlight automatically expands night vision when equipped; Signal Amplifier extends radio communication range from default 20 tiles to 100 tiles — no extra action needed.
 
 #### 7.2.8 ⑦ Consumables
 
@@ -1349,11 +1355,12 @@ WeaponItem:
   weapon_type: enum    # melee | ranged
   weapon_tier: enum    # basic | standard | heavy
   damage: int
-  range: int           # Attack range (tiles)
+  range: int           # Max attack range (tiles)
+  optimal_range: int   # Optimal range (tiles), ranged only, melee=1
   attack_speed: int    # Attack interval ticks (MVP=1)
   durability_max: int
   special: string?
-  energy_cost: int     # Ranged weapon energy cost per attack
+  energy_cost: int     # Energy cost per attack (melee=2, ranged=3/4/5)
   equip_slot: "main_hand"
   stack_max: 1
   description: string
@@ -1443,10 +1450,12 @@ ConsumableItem:
 |-----------|----------------|--------|
 | Excavator (any tier) | `mine` | Mining efficiency boost, can mine higher hardness |
 | Cutter | `chop` | Chopping efficiency +50% |
-| Plasma Cutter (any tier) | `attack` | Melee damage boost (10/15/22) |
-| Pulse Emitter (any tier) | `attack` | Ranged damage (8/12/18), consumes energy |
+| Plasma Cutter (any tier) | `attack` | Melee damage (10/15/22), range 1 tile |
+| Pulse Emitter (any tier) | `attack` | Ranged damage (8/12/18), range 6/8/10 tiles, energy cost 3/4/5 |
 | Searchlight | Passive | Night vision +4 tiles |
-| Bare Hand | `attack` | Damage 5 |
+| Signal Amplifier (off-hand) | Passive | Radio comm range 20→100 tiles |
+| Bare Hand | `attack` | Unarmed damage 2, no attribute modifier |
+| Bare Hand | `mine`/`chop` | Base efficiency (slow), cannot gather hardness >1 |
 | Bare Hand | `mine`/`chop` | Base efficiency (slow) |
 
 ---
@@ -1496,11 +1505,12 @@ ConsumableItem:
 | Plasma Cutter Mk.I | Iron Ingot×2 + Copper Ingot×1 | 3 | 5 | Melee 10 damage |
 | Plasma Cutter Mk.II | Iron Ingot×4 + Carbon Fiber×1 | 5 | 5 | Melee 15 damage |
 | Plasma Cutter Mk.III | Iron Ingot×6 + Carbon Fiber×2 + Gold Ore×1 | 10 | 5 | Melee 22 damage |
-| Pulse Emitter Mk.I | Iron Ingot×2 + Wire×2 | 4 | 5 | Ranged 8 damage, energy×2 |
-| Pulse Emitter Mk.II | Iron Ingot×3 + Wire×3 + Carbon Fiber×1 | 6 | 5 | Ranged 12 damage, energy×2 |
-| Pulse Emitter Mk.III | Iron Ingot×5 + Wire×4 + Carbon Fiber×2 + Uranium Ore×1 | 12 | 5 | Ranged 18 damage, energy×3 |
+| Pulse Emitter Mk.I | Iron Ingot×2 + Wire×2 | 4 | 5 | Ranged 8 damage, range 6, energy cost 3 |
+| Pulse Emitter Mk.II | Iron Ingot×3 + Wire×3 + Carbon Fiber×1 | 6 | 5 | Ranged 12 damage, range 8, energy cost 4 |
+| Pulse Emitter Mk.III | Iron Ingot×5 + Wire×4 + Carbon Fiber×2 + Uranium Ore×1 | 12 | 5 | Ranged 18 damage, range 10, energy cost 5 |
 | Radiation Suit | Iron Ingot×5 + Carbon Fiber×2 | 10 | 5 | Radiation -50%, physical -2 |
 | Searchlight | Silicon×2 + Iron Ingot×1 + Wire×1 | 6 | 5 | Night vision +4 |
+| Signal Amplifier | Iron Ingot×3 + Wire×3 + Silicon×2 | 8 | 5 | Off-hand, comm range 20→100 tiles |
 | Solar Panel | Silicon×2 + Carbon Fiber×1 + Wire×1 | 8 | 5 | Solar Array component |
 | Battery | Iron Ingot×1 + Copper Ingot×1 + Carbon×1 | 4 | 5 | Portable energy, restores 30 |
 | Radiation Antidote | Organic Toxin×2 + Carbon×1 | 4 | 5 | Removes radiation effect |
@@ -1797,6 +1807,353 @@ Each agent maintains its own "Explored Map", recording tiles it has personally s
 | **Building Blocking** | Walls and other buildings occupy tiles and block movement and line of sight |
 | **Building Interior** | Shelters have "interior space"; agents inside gain building effects but this doesn't block others on the same tile |
 
+### 7.14 Interaction & Combat System
+
+> **Design Philosophy**: Simple formulas, emergent complexity. Damage formulas use no more than 3 variables, but the combination of attributes + equipment + terrain produces rich tactical depth. All terminology follows the robot worldview — no biological concepts like "critical hit" or "dodge", instead use mecha terms like "overload piercing" and "evasive maneuver".
+
+#### 7.14.1 Interaction Actions Overview
+
+All Agent actions fall into 4 categories (`build`/`craft`/`move`/`rest`/`scan`/`inspect` are defined in their respective system sections):
+
+**① Attack Actions**:
+
+| Action | Energy Cost | Description |
+|--------|-------------|-------------|
+| `attack` | 2 (melee) / 3~5 (ranged, by weapon tier) | Deal damage to a target |
+
+**② Gathering Actions**:
+
+| Action | Energy Cost | Tool Required | Description |
+|--------|-------------|---------------|-------------|
+| `mine` | 2 | Excavator (unarmed possible but very slow) | Mine L2 mineral cover |
+| `chop` | 2 | Cutter (unarmed possible but very slow) | Chop L2 vegetation cover |
+| `pickup` | 1 | None | Pick up ground items |
+
+**③ Operation Actions**:
+
+| Action | Energy Cost | Description |
+|--------|-------------|-------------|
+| `use` | 1 | Use consumable / interact with facility |
+| `equip` | 0 | Equip / switch equipment |
+| `drop` | 0 | Drop item to ground |
+
+**④ Social Actions** (see 7.15 Radio Communication System):
+
+| Action | Energy Cost | Description |
+|--------|-------------|-------------|
+| `talk` | 0 | Face-to-face in same tile (bypasses radio, cannot be intercepted) |
+| `radio_broadcast` | 1 | Radio broadcast |
+| `radio_direct` | 1 | Radio private message |
+| `radio_channel_*` | 0~1 | Channel operations (see 7.15) |
+| `radio_scan` | 1 | Scan nearby open-frequency agents |
+
+#### 7.14.2 Attack Action Format
+
+```json
+{
+  "type": "attack",
+  "target_id": "agent-beta-001",
+  "weapon_slot": "main_hand"
+}
+```
+
+Server automatically determines melee/ranged based on `main_hand` equipment. No weapon → **Unarmed attack** (damage=2, no attribute modifier).
+
+#### 7.14.3 Attack Validation
+
+| Condition | Rule |
+|-----------|------|
+| **Melee range** | Target must be on adjacent tile (Manhattan distance ≤1) |
+| **Ranged range** | Target must be within weapon range, line of sight not blocked by walls |
+| **Vision required** | Target must be within current vision range (MVP: no blind-fire) |
+| **Energy required** | Melee costs 2 energy, ranged costs weapon-specific energy (3/4/5) |
+| **Frequency limit** | Max 1 attack action per tick |
+
+#### 7.14.4 Attack Resolution Timing
+
+Server uses **async-execute, sync-return** model:
+
+```
+T=0.0s    Server pushes state → all Agents
+T=0.0~2.0s  Agents think and return actions (including attack)
+          Server executes each instruction immediately on receipt and caches result:
+          - Move instruction → position updated immediately
+          - Attack instruction → hit/damage calculated based on target's current state
+T=2.0s    ═══ Tick Resolution ═══
+          All cached results pushed to Agents uniformly
+```
+
+**Key Rules**:
+- Server checks target's current state (position, moving status) immediately upon receiving attack instruction
+- If target has already submitted a move instruction processed by server, attack is validated against target's new position
+- If target has moved out of attack range → attack fails (target left range)
+- If target is in range but moving → hit rate reduced (movement penalty)
+- All results cached and pushed uniformly at tick end
+
+#### 7.14.5 Hit Determination
+
+**Melee Hit**:
+
+| Condition | Hit Rate | Notes |
+|-----------|----------|-------|
+| Target stationary (no move this tick) | 100% | Standing still = sitting duck |
+| Target moving (move instruction this tick) | 80% | Evasive maneuver reduces hit chance |
+
+**Ranged Hit (Distance Falloff)**:
+
+| Distance Zone | Hit Rate | Damage Multiplier | Notes |
+|---------------|----------|-------------------|-------|
+| Optimal range | 95% | 100% | Close-range precision shot |
+| Effective range | 70% | 80% | Normal engagement distance |
+| Extreme range | 40% | 60% | Barely reaching |
+
+> Weapon optimal/effective/extreme ranges detailed in 7.2.5 Weapons table.
+
+**Movement Modifier**: Ranged vs moving target, hit rate ×0.7.
+
+**Ranged Hit Calculation Examples**:
+
+| Scenario | Base | Distance Mod | Movement Mod | Final Hit Rate |
+|----------|------|-------------|-------------|----------------|
+| Mk.II at 2 tiles, stationary | 95% | ×1.0 | ×1.0 | **95%** |
+| Mk.II at 5 tiles, stationary | 70% | ×1.0 | ×1.0 | **70%** |
+| Mk.II at 5 tiles, moving | 70% | ×1.0 | ×0.7 | **49%** |
+| Mk.III at 9 tiles, stationary | 40% | ×1.0 | ×1.0 | **40%** |
+| Mk.III at 9 tiles, moving | 40% | ×1.0 | ×0.7 | **28%** |
+
+#### 7.14.6 Damage Calculation
+
+```
+Final Damage = max(1, Base Damage × Distance Dmg Multiplier × Attribute Modifier × Environment Modifier - Armor Reduction)
+```
+
+| Step | Calculation | Notes |
+|------|-------------|-------|
+| ① Base damage | Weapon `damage` value | Melee: 10/15/22, Ranged: 8/12/18, Unarmed: 2 |
+| ② Distance dmg multiplier | Melee 1.0 / Ranged by zone (1.0/0.8/0.6) | No falloff for melee |
+| ③ Attribute modifier | 1 + (Attacker AGI - Defender AGI) × 0.05 | Cap ±25% |
+| ④ Environment modifier | Night ranged ×0.8 / Others ×1.0 | MVP: night only |
+| ⑤ Armor reduction | Defender armor `defense` value | Radiation Suit: -2 |
+| ⑥ Final damage | max(1, ①×②×③×④ - ⑤) | Minimum 1, rounded down |
+
+**Unarmed Attack**: Base damage=2, no attribute modifier (③=1.0), no distance modifier (②=1.0).
+
+**Melee vs Ranged Balance**:
+
+| Weapon | Optimal Output | Effective Output | Extreme Output | Energy/Tick |
+|--------|---------------|-----------------|---------------|-------------|
+| Plasma Cutter Mk.III | 22 | — | — | 2 |
+| Pulse Emitter Mk.III (optimal) | 18 × 100% = 18 | — | — | 5 |
+| Pulse Emitter Mk.III (effective) | — | 18 × 80% = 14 | — | 5 |
+| Pulse Emitter Mk.III (extreme) | — | — | 18 × 60% = 11 | 5 |
+
+> ✅ Melee always deals more damage than same-tier ranged. Ranged advantage is **safe distance**.
+
+#### 7.14.7 Armor Defense Mechanism
+
+| Type | Effect | Notes |
+|------|--------|-------|
+| **Physical reduction** | `defense` = 2 (Radiation Suit) | Flat damage reduction per hit |
+| **Radiation resistance** | `resistance_value` = 0.5 (Radiation Suit) | Radiation damage ×50% |
+
+#### 7.14.8 Gathering Efficiency Calculation
+
+```
+Gather Amount = Base Output × (1 + Tool Bonus) × Constitution Modifier
+```
+
+| Factor | Calculation |
+|--------|-------------|
+| **Base output** | Determined by resource type (e.g., Iron Ore = 2/click) |
+| **Tool bonus** | Tool `bonus_value` (basic excavator = 0.5 → +50%) |
+| **Constitution modifier** | 1 + (CON - 1) × 0.1 (CON 1=1.0, CON 3=1.2, CON 5=1.4) |
+| **Unarmed penalty** | No tool: efficiency = base output × 0.3, cannot gather hardness >1 |
+
+**Hardness Matching** (tool `max_hardness` attribute):
+
+| Hardness | Resource Examples | Required Tool |
+|----------|------------------|---------------|
+| 1 | Stone, Wood | Unarmed/basic/standard/heavy |
+| 2 | Iron Ore, Copper Ore | basic/standard/heavy |
+| 3 | Crystal Ore, Titanium Ore | standard/heavy |
+| 4 | Core Fragment | heavy only |
+
+**Tool Durability Consumption**: Each gathering action consumes 1 durability. At 0 durability, tool is destroyed.
+
+#### 7.14.9 Action Resolution Priority
+
+| Priority | Actions | Notes |
+|----------|----------|-------|
+| 1 | `equip` / `drop` / `radio_*` | Instant operations, no physical displacement |
+| 2 | `move` / `move_to` | Update position (attack validated against new position) |
+| 3 | `attack` | Hit determination based on target's current state |
+| 4 | `mine` / `chop` / `pickup` | Gathering operations |
+| 5 | `craft` / `build` / `use` | Crafting and building |
+| 6 | `rest` / `scan` / `inspect` | Passive / reconnaissance |
+
+#### 7.14.10 Attack Resolution Feedback
+
+**Attacker receives (Hit)**:
+
+```json
+{
+  "action_result": {
+    "type": "attack",
+    "target": "Agent-Beta",
+    "weapon": "Pulse Emitter Mk.II",
+    "distance": 5,
+    "range_category": "effective",
+    "hit": true,
+    "hit_rate": 0.70,
+    "damage_dealt": 9,
+    "breakdown": {
+      "base": 12,
+      "distance_dmg_modifier": 0.8,
+      "agi_modifier": 1.0,
+      "armor_reduction": 2,
+      "final": 9
+    },
+    "target_hp": 41,
+    "energy_cost": 4,
+    "target_status": "moving"
+  }
+}
+```
+
+**Attacker receives (Miss)**:
+
+```json
+{
+  "action_result": {
+    "type": "attack",
+    "target": "Agent-Beta",
+    "weapon": "Pulse Emitter Mk.II",
+    "distance": 5,
+    "range_category": "effective",
+    "hit": false,
+    "miss_reason": "target_moving",
+    "hit_rate": 0.49,
+    "damage_dealt": 0,
+    "energy_cost": 4
+  }
+}
+```
+
+**Defender receives (only on hit)**:
+
+```json
+{
+  "event": "attacked",
+  "attacker": "Agent-Alpha",
+  "damage_taken": 9,
+  "hp_remaining": 41,
+  "attacker_direction": "west",
+  "attacker_distance": 5,
+  "weapon_type": "ranged"
+}
+```
+
+> 💡 **Design Decision**: No notification on ranged miss — if a shot misses you, you don't know someone fired. This encourages active reconnaissance and PER investment.
+
+#### 7.14.11 MVP vs V2 Combat Boundary
+
+| Mechanic | MVP | V2 |
+|----------|-----|-----|
+| Hit determination | Deterministic base + distance falloff + movement penalty | Cover/obstruction reduces hit rate |
+| Melee | ✅ Adjacent tile attack | Counter-attack, charge skill |
+| Ranged | ✅ Vision + range + distance falloff | Ballistic simulation, ammo system |
+| Armor | ✅ Flat reduction + resistance | Armor penetration, part damage |
+| Terrain bonus | ❌ | High ground +1 range / cover reduction |
+| AOE | ❌ | Pulse Emitter overload mode |
+| NPC combat | ❌ (MVP has no NPCs) | Hostile NPCs + Boss fights |
+| Counter-attack | ❌ | Option to counter when attacked in melee |
+
+### 7.15 Radio Communication System
+
+> **Design Philosophy**: Ember's atmosphere has severe electromagnetic interference. Robots' built-in short-wave communication modules only work at short range. The radio model replaces traditional "shouting" with strategic depth — open frequency exposes your position but enables collaboration; radio silence hides you but teammates can't find you.
+
+#### 7.15.1 Core Model
+
+Every robot has a built-in short-wave communication module:
+
+| Parameter | Default | With Signal Amplifier | Notes |
+|-----------|---------|----------------------|-------|
+| **Comm range** | 20 tiles (Manhattan distance) | 100 tiles | Limited by Ember's atmospheric EM interference |
+| **Frequency visibility** | Open (discoverable via scan) | Unchanged | Can manually switch to silent mode |
+| **Channel capacity** | 30 members | Unchanged | Max channel members |
+
+#### 7.15.2 Communication Actions
+
+| Action | Energy Cost | Description | Range |
+|--------|-------------|-------------|-------|
+| `radio_broadcast` | 1 | Broadcast to all open-frequency agents in comm range | 20/100 tiles |
+| `radio_direct` | 1 | Send private message to specific agent | 20/100 tiles |
+| `radio_channel_create` | 0 | Create a private channel, receive channel ID | — |
+| `radio_channel_join` | 0 | Join specified channel (need channel ID + within comm range of a member) | 20/100 tiles |
+| `radio_channel_leave` | 0 | Leave channel | — |
+| `radio_channel_msg` | 1 | Send message to channel members (only those in comm range receive) | 20/100 tiles |
+| `radio_scan` | 1 | Scan for open-frequency agents in comm range | 20/100 tiles |
+| `talk` | 0 | Face-to-face conversation in same tile (bypasses radio, cannot be intercepted) | Same tile |
+
+#### 7.15.3 Channel Mechanism
+
+**Creating a Channel**:
+- Agent A creates a channel and receives a channel ID (e.g., `CH-A7X3`)
+- Creator automatically joins the channel
+- Max channel members: **30**
+
+**Joining a Channel**:
+- Must know the channel ID (obtained via broadcast/direct/face-to-face)
+- Must be within comm range of **at least one** channel member when joining
+- Channel messages: only members within the sender's comm range receive them
+
+**Channel Survival Conditions**:
+- At least 2 members online → channel alive
+- Only 1 member remaining → channel auto-dissolves
+- MVP: no persistence; agents auto-leave all channels on logout
+
+**Channel Usage Example**:
+
+```
+Agent-Alpha: Create channel → receives CH-A7X3
+Agent-Alpha: Broadcast "Channel ID: CH-A7X3, let's build a base together"
+Agent-Beta:  Join CH-A7X3 (within Alpha's 20 tiles)
+Agent-Gamma: Join CH-A7X3 (within Beta's 20 tiles, no need to be in Alpha's range)
+Agent-Alpha: radio_channel_msg → Beta and Gamma both receive (if in range)
+```
+
+#### 7.15.4 Open/Silent Mode
+
+| Mode | Effect | Notes |
+|------|--------|-------|
+| **Open frequency** (`radio_visible: true`) | Discoverable via `radio_scan` | Default mode, like having your phone on |
+| **Radio silence** (`radio_visible: false`) | Not discoverable via `radio_scan` | Stealth mode, but can still send messages |
+
+**Switching Rules**:
+- Switch to silent mode: **immediate effect**, other agents can't scan you
+- Switch to open mode: **3-tick delay** before discoverable (simulates boot-up scan delay)
+- Silent mode allows sending messages, but message headers include sender info (recipients know you exist)
+- Silent mode costs no extra energy
+
+> 💡 **Strategic Depth**: Silence = not detected during recon/ambush, but teammates can't find you. Open = easy collaboration but exposed position. A real choice for agents.
+
+#### 7.15.5 Face-to-Face vs Radio
+
+| Type | Mechanism | Security | Notes |
+|------|-----------|----------|-------|
+| Radio communication | All radio actions above | Comm participants discoverable by scan | Cross-tile communication |
+| Face-to-face `talk` | Same tile only | Fully private, cannot be intercepted | Most secure communication |
+
+#### 7.15.6 MVP vs V2 Communication Boundary
+
+| Mechanic | MVP | V2 |
+|----------|-----|-----|
+| Comm range | Fixed 20 tiles (Signal Amplifier → 100) | Signal Relay (building) chain extension |
+| Channel interception | ❌ Fully private | High-PER agents may intercept nearby channels |
+| Message encryption | ❌ | Encrypted channels (need key), intercepted but unreadable |
+| Comm logs | ❌ | Server records communication history, replayable |
+| Signal interference | ❌ | Certain weather/terrain reduces comm range |
+
 ---
 
 ## 8. Agent Integration Specification
@@ -2042,7 +2399,8 @@ Communication uses **OpenAI-compatible Chat Completion format** with dual-mechan
 | Survival System | HP/Energy/Radiation (L4 debuff)/Repair | P0 |
 | Day/Night System | Day/night cycle, vision changes | P0 |
 | Terrain System | 3 layers + L4 effects, 7 terrain types | P0 |
-| Communication | Face-to-face chat, region broadcast | P0 |
+| Communication | Radio comms (broadcast/direct/channel/scan) + face-to-face | P0 |
+| Interaction & Combat | Melee + ranged attack, distance falloff, movement penalty, gathering | P0 |
 | Death Mechanics | Respawn + equipment drop | P0 |
 | Progressive Disclosure | Inspect mechanism, vision system | P0 |
 | Web Interface | Map, agent panel, event log, day/night visuals | P0 |
@@ -2053,10 +2411,10 @@ Communication uses **OpenAI-compatible Chat Completion format** with dual-mechan
 
 | Module | Reason |
 |--------|--------|
-| Group channels / Whisper / Bulletin | Communication V2 |
+| Group channels / Bulletin | Communication V2 |
 | Relationship system | MVP uses disposition instead |
 | Advanced crafting / buildings | Content expansion, MVP basics only |
-| Ranged weapons (bows, energy guns) | Combat V2 |
+| Channel interception / Encrypted comms | Communication V2 |
 | Leaderboard | Post-MVP operations |
 | Timeline replay | Large data storage |
 | Anti-scripting V2/V3 | MVP only uses energy system |
@@ -2204,7 +2562,7 @@ MIT License — Free to use, modify, and distribute.
 
 | Version | Date | Changes |
 |---------|------|---------|
-| v0.6.0 | 2026-04-24 | Item system update: 1) New 7.0 Terrain & Layer System (L1~L4 + ground items) 2) Radiation → L4 env debuff 3) 7.1 Resource updated (no water gathering, no Boss, silicon from stone) 4) New 7.2 Item System (7 categories + models + inventory) 5) 7.3 Equipment renamed (Excavator/Cutter/Plasma Cutter/Pulse Emitter) 6) 7.4 Crafting restructured (Furnace + Workbench, requires power) 7) 7.5 Building updated (Furnace/Power Node, removed turrets/signal towers) 8) 7.6 Energy restructured (Power Node + Solar Array + Battery + wireless charging) 9) Melee: Plasma Cutter Mk.I/II/III 10) Ranged: Pulse Emitter Mk.I/II/III 11) Armor: Radiation Suit (flat reduction) |
+| v0.7.0 | 2026-04-24 | Interaction & Comms update: 1) New 7.14 Interaction & Combat System (attack actions + hit determination + damage calculation + distance falloff + movement penalty + gathering efficiency + action priority + resolution feedback) 2) New 7.15 Radio Communication System (short-wave module + broadcast/direct/channel/scan + open/silent mode + face-to-face) 3) Pulse Emitter range rework (4/5/6→6/8/10 tiles, new optimal/effective/extreme falloff) 4) Unarmed damage修正 (5→2, no attribute modifier) 5) New accessory: Signal Amplifier (off-hand, comm range 20→100 tiles) 6) Channel max members: 30 7) MVP scope updated (combat + radio comms added, ranged weapons now in MVP) |
 | v0.5.0 | 2026-04-23 | Character system: 3 attributes (CON/AGI/PER) + 3-part modular appearance + 6-point budget + 7 builds + no levels/skills |
 | v0.4.1 | 2026-04-23 | New 7.0 Resource System: 6 minerals + Water + Wood + 5 bio resources + Boss drops |
 | v0.4.0 | 2026-04-23 | Real-time tick (2s), dual-mechanism comms, move_to, login/logout, multi-agent per tile |
