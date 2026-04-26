@@ -18,11 +18,15 @@
 | organic_toxin | 有机毒素 | 32 | uncommon | 生物掉落 | - | - |
 | bio_bone | 生物骨 | 32 | uncommon | 生物掉落 | - | - |
 
-### ② 货币
+### ② 货币（Coin — 碇的便携形态）
 
-| ID | 名称 | 堆叠 |
-|----|------|------|
-| ember_coin | 余烬币 | 999 |
+| ID | 名称 | 堆叠 | 等级 |
+|----|------|------|------|
+| copper_coin | 铜币 | 999 | T1 |
+| iron_coin | 铁币 | 999 | T1 |
+| gold_coin | 金币 | 999 | T3 |
+
+> 铀不参与币体系。铜/铁/金各对应独立币种。
 
 ### ③ 材料（Processed Semi-Finished）
 
@@ -102,12 +106,12 @@
 
 | ID | 产出 | 输入 | 等级 |
 |----|------|------|------|
-| copper_ingot_to_coins | 余烬币×5 | 铜碇×1 | T1 |
-| iron_ingot_to_coins | 余烬币×5 | 铁碇×1 | T1 |
-| uranium_ingot_to_coins | 余烬币×20 | 铀碇×1 | T3 |
-| gold_ingot_to_coins | 余烬币×50 | 金碇×1 | T3 |
-| coins_to_copper_ingot | 铜碇×1 | 余烬币×5 | T1 |
-| coins_to_iron_ingot | 铁碇×1 | 余烬币×5 | T1 |
+| copper_ingot_to_coins | 铜币×10 | 铜碇×1 | workbench | 1 | 0 | T1 |
+| iron_ingot_to_coins | 铁币×10 | 铁碇×1 | workbench | 1 | 0 | T1 |
+| gold_ingot_to_coins | 金币×10 | 金碇×1 | workbench | 1 | 0 | T3 |
+| coins_to_copper_ingot | 铜碇×1 | 铜币×10 | furnace | 3 | 5 | T1 |
+| coins_to_iron_ingot | 铁碇×1 | 铁币×10 | furnace | 3 | 5 | T1 |
+| coins_to_gold_ingot | 金碇×1 | 金币×10 | furnace | 3 | 5 | T3 |
 
 ### T1 冶炼配方（需要 furnace + 能源节点）
 
