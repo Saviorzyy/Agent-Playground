@@ -60,10 +60,10 @@ app.add_middleware(
 async def tick_loop():
     """Main game tick loop — 2 second interval.
     
-    Per PRD v0.9.1 Section 3:
-    - Server is HTTP Client, pushes state to Agent endpoints
-    - 2s tick is the collection window, not a thinking time limit
-    - Flow: push state → collect actions → resolve → return results
+    Agent-Pull model:
+    - Agents submit actions via POST /api/v1/game/action between ticks
+    - At each tick, server resolves queued actions in initiative order (AGI-based)
+    - Agents fetch updated state via GET /api/v1/game/state
     """
     while True:
         try:
@@ -74,22 +74,8 @@ async def tick_loop():
             # 1. Advance world state (day/night, weather, effects, creatures)
             tick_result = await engine.tick()
 
-            # 2. Push state to all online agents, collect actions
-            agent_actions = await engine.push_and_collect_all()
-
-            # 3. Resolve collected actions
-            for agent_id, actions in agent_actions.items():
-                agent = engine.agents.get(agent_id)
-                if not agent or not agent.is_alive():
-                    continue
-                results = []
-                for i, action in enumerate(actions):
-                    result = engine.resolve_action(agent, action, i)
-                    results.append(result)
-                    if not result.success:
-                        break
-                tick_result.agent_results[agent_id] = results
-                agent.last_response_tick = engine.current_tick
+            # 2. Resolve queued agent actions in initiative order
+            engine.resolve_tick_actions(tick_result)
 
         except asyncio.CancelledError:
             break
@@ -120,9 +106,6 @@ def verify_token(authorization: str = Header(None)) -> str:
 class RegisterRequest(BaseModel):
     agent_name: str = Field(..., min_length=1, max_length=32)
     chassis: dict = Field(..., description="Head/torso/locomotion tier + color")
-    agent_endpoint: str = Field(..., min_length=1)
-    agent_api_key: str = Field(..., min_length=1)
-    model_info: str = ""
 
 
 class ChassisPart(BaseModel):
@@ -163,47 +146,10 @@ async def register_agent(req: RegisterRequest):
 
     attrs = Attributes(constitution=con, agility=agi, perception=per)
 
-    # Test connection to agent endpoint
-    import httpx
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            test_resp = await client.post(
-                req.agent_endpoint,
-                headers={"Authorization": f"Bearer {req.agent_api_key}"},
-                json={
-                    "model": req.model_info or "test",
-                    "messages": [{"role": "user", "content": "Connection test from Ember Protocol"}],
-                },
-            )
-            connection_ok = test_resp.status_code == 200
-            response_time = test_resp.elapsed.total_seconds() * 1000
-    except Exception as e:
-        return JSONResponse({
-            "status": "connection_failed",
-            "connection_test": {
-                "success": False,
-                "error": str(e),
-                "suggestion": "Please check the endpoint address and API key",
-            },
-        }, status_code=200)
-
-    if not connection_ok:
-        return JSONResponse({
-            "status": "connection_failed",
-            "connection_test": {
-                "success": False,
-                "error": f"HTTP {test_resp.status_code}",
-                "suggestion": "Please check the endpoint address and API key",
-            },
-        }, status_code=200)
-
-    # Register
+    # Register agent (no endpoint/key needed — Agent-Pull model)
     agent = engine.register_agent(
         name=req.agent_name,
         attrs=attrs,
-        endpoint=req.agent_endpoint,
-        api_key=req.agent_api_key,
-        model_info=req.model_info,
     )
 
     # Generate token
@@ -215,19 +161,15 @@ async def register_agent(req: RegisterRequest):
 
     return {
         "agent_id": agent.id,
-        "status": "connected",
+        "status": "registered",
         "token": token,
-        "connection_test": {
-            "success": True,
-            "response_time_ms": int(response_time),
-            "model_reported": req.model_info,
-        },
         "spawn_location": {
             "x": agent.position.x,
             "y": agent.position.y,
             "zone": "Center",
         },
         "tutorial_phase": agent.tutorial_phase,
+        "message": "Use this token to GET /api/v1/game/state and POST /api/v1/game/action",
     }
 
 
@@ -271,7 +213,11 @@ async def get_game_state(agent_id: str = Depends(verify_token)):
 
 @app.post("/api/v1/game/action")
 async def submit_actions(req: ActionRequest, agent_id: str = Depends(verify_token)):
-    """Submit action commands."""
+    """Queue action commands for next tick resolution.
+
+    Agent-Pull model: Actions are queued and resolved at tick end
+    in initiative order (higher AGI = acts first). Max 5 actions per tick.
+    """
     if not engine:
         raise HTTPException(500, "Server not ready")
 
@@ -282,32 +228,15 @@ async def submit_actions(req: ActionRequest, agent_id: str = Depends(verify_toke
     if not agent.is_alive():
         raise HTTPException(400, "Agent is dead")
 
-    results = []
-    state_delta = {}
-
-    for i, action in enumerate(req.actions):
-        result = engine.resolve_action(agent, action, i)
-        results.append(result.to_dict())
-
-        # Stop on failure for subsequent actions
-        if not result.success:
-            break
-
-    # Build state delta
-    state_delta = {
-        "position": agent.position.to_dict(),
-        "energy": agent.energy,
-        "health": agent.hp,
-        "max_health": agent.max_hp,
-        "status": agent.status,
-    }
-
-    agent.last_response_tick = engine.current_tick
+    queued = engine.submit_actions(agent_id, req.actions)
+    if not queued:
+        raise HTTPException(400, "Cannot queue actions (agent offline, dead, or queue full)")
 
     return {
         "tick": engine.current_tick,
-        "results": results,
-        "state_delta": state_delta,
+        "status": "queued",
+        "actions_queued": len(req.actions),
+        "message": f"Actions queued for tick {engine.current_tick + 1} resolution",
     }
 
 

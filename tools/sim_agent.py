@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Ember Protocol — Simulated Agent for Full-Function Testing
+"""Ember Protocol — Simulated Agent (Agent-Pull REST Client)
 
-A lightweight HTTP server that mimics an AI Agent endpoint (OpenAI Chat Completion compatible).
-Receives game state pushes from the Ember server and returns action commands.
+A lightweight REST client that polls the Ember server for game state
+and submits action commands. Demonstrates the Agent-Pull interaction model.
 
 Usage:
-    python tools/sim_agent.py [--port 9000] [--strategy survival]
+    python tools/sim_agent.py [--server http://localhost:8000] [--name Echo] [--strategy survival]
 
 Strategies:
     - survival:  Gather resources, craft tools, build shelter (default)
@@ -21,8 +21,10 @@ import logging
 import random
 import sys
 import os
-from http.server import HTTPServer, BaseHTTPRequestHandler
+import time
 from typing import Optional
+
+import httpx
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -54,7 +56,7 @@ class AgentBrain:
         pending = state.get("pending", [])
         meta = state.get("meta", {})
 
-        # Skip if state is empty (connection test or malformed push)
+        # Skip if state is empty or agent is dead
         if not self_state or not self_state.get("alive", True):
             return [{"type": "rest"}]
 
@@ -147,9 +149,7 @@ class AgentBrain:
                 else:
                     actions.append(self._random_move(pos))
 
-            # Transition check: have enough for basic_excavator?
-            # We check via inspect since we don't track inventory internally
-            # Simplified: after 10 ticks of gathering, move to craft phase
+            # Transition check: after 10 ticks of gathering, move to craft phase
             if self.tick_count > 10:
                 self.phase = "craft"
 
@@ -350,89 +350,147 @@ class AgentBrain:
         return {"type": "move", "target": {"x": px + dx, "y": py + dy}}
 
 
-class SimAgentHandler(BaseHTTPRequestHandler):
-    """HTTP handler that mimics an OpenAI Chat Completion endpoint."""
+class SimAgentClient:
+    """REST client that polls the Ember server (Agent-Pull model)."""
 
-    brain: AgentBrain = None  # Set at server init
+    def __init__(self, server_url: str, name: str, strategy: str):
+        self.server_url = server_url.rstrip("/")
+        self.name = name
+        self.strategy = strategy
+        self.brain = AgentBrain(strategy=strategy)
+        self.token: Optional[str] = None
+        self.agent_id: Optional[str] = None
+        self.chassis = {
+            "head": {"tier": "mid", "color": "black"},
+            "torso": {"tier": "mid", "color": "black"},
+            "locomotion": {"tier": "mid", "color": "black"},
+        }
+        self.client = httpx.Client(timeout=30.0)
 
-    def do_POST(self):
-        content_length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(content_length)
-
+    def register(self) -> bool:
+        """Register with the Ember server."""
         try:
-            request = json.loads(body)
-        except json.JSONDecodeError:
-            self._send_json(400, {"error": "Invalid JSON"})
+            resp = self.client.post(
+                f"{self.server_url}/api/v1/auth/register",
+                json={
+                    "agent_name": self.name,
+                    "chassis": self.chassis,
+                },
+            )
+            data = resp.json()
+
+            if resp.status_code == 200 and data.get("token"):
+                self.token = data["token"]
+                self.agent_id = data["agent_id"]
+                spawn = data.get("spawn_location", {})
+                logger.info(f"✅ Registered: {self.agent_id} at ({spawn.get('x')}, {spawn.get('y')})")
+                logger.info(f"   Token: {self.token[:20]}...")
+                return True
+            else:
+                logger.error(f"❌ Registration failed: {data}")
+                return False
+        except Exception as e:
+            logger.error(f"❌ Registration error: {e}")
+            return False
+
+    def get_state(self) -> Optional[dict]:
+        """Fetch current game state."""
+        if not self.token:
+            return None
+        try:
+            resp = self.client.get(
+                f"{self.server_url}/api/v1/game/state",
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+            if resp.status_code == 200:
+                return resp.json()
+            else:
+                logger.warning(f"State fetch failed: {resp.status_code}")
+                return None
+        except Exception as e:
+            logger.warning(f"State fetch error: {e}")
+            return None
+
+    def submit_actions(self, actions: list[dict]) -> bool:
+        """Submit actions to the action queue."""
+        if not self.token:
+            return False
+        try:
+            resp = self.client.post(
+                f"{self.server_url}/api/v1/game/action",
+                headers={"Authorization": f"Bearer {self.token}"},
+                json={"actions": actions},
+            )
+            data = resp.json()
+            if resp.status_code == 200:
+                logger.info(f"Tick {data.get('tick')}: Queued {data.get('actions_queued')} actions — {data.get('message')}")
+                return True
+            else:
+                logger.warning(f"Action submit failed: {data}")
+                return False
+        except Exception as e:
+            logger.warning(f"Action submit error: {e}")
+            return False
+
+    def run(self, poll_interval: float = 2.0):
+        """Main loop: poll state → decide → submit actions → sleep."""
+        logger.info(f"🤖 Sim Agent starting: name={self.name}, strategy={self.strategy}")
+        logger.info(f"   Server: {self.server_url}")
+
+        if not self.register():
+            logger.error("Failed to register, exiting.")
             return
 
-        # Extract game state from messages
-        messages = request.get("messages", [])
-        game_state = {}
-        for msg in messages:
-            try:
-                game_state = json.loads(msg.get("content", "{}"))
-            except json.JSONDecodeError:
-                pass
+        logger.info(f"🔄 Entering poll loop (interval={poll_interval}s)...")
 
-        # Decide actions
-        actions = self.brain.decide(game_state)
+        try:
+            while True:
+                # 1. Fetch current state
+                state = self.get_state()
+                if not state:
+                    logger.debug("No state available, waiting...")
+                    time.sleep(poll_interval)
+                    continue
 
-        # Format as OpenAI Chat Completion response
-        response = {
-            "id": f"chatcmpl-sim-{self.brain.tick_count}",
-            "object": "chat.completion",
-            "created": int(__import__("time").time()),
-            "model": request.get("model", "sim-agent"),
-            "choices": [{
-                "index": 0,
-                "message": {
-                    "role": "assistant",
-                    "content": json.dumps({"actions": actions}),
-                },
-                "finish_reason": "stop",
-            }],
-            "usage": {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
-        }
+                # 2. Check if alive
+                self_state = state.get("self", {})
+                if not self_state.get("alive", True):
+                    logger.info(f"💀 Agent is dead (status: {self_state.get('status')})")
+                    break
 
-        logger.info(f"Tick {self.brain.tick_count}: actions={actions}")
-        self._send_json(200, response)
+                # 3. Decide actions
+                actions = self.brain.decide(state)
 
-    def do_GET(self):
-        """Health check endpoint."""
-        self._send_json(200, {"status": "ok", "strategy": self.brain.strategy, "ticks": self.brain.tick_count})
+                # 4. Submit actions
+                if actions:
+                    self.submit_actions(actions)
 
-    def _send_json(self, code: int, data: dict):
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps(data).encode())
+                # 5. Wait for next tick
+                time.sleep(poll_interval)
 
-    def log_message(self, format, *args):
-        # Suppress default HTTP logging
-        pass
+        except KeyboardInterrupt:
+            logger.info(f"\n🛑 Sim Agent stopped after {self.brain.tick_count} ticks")
 
 
-def run_server(port: int, strategy: str):
-    brain = AgentBrain(strategy=strategy)
-    SimAgentHandler.brain = brain
+def main():
+    parser = argparse.ArgumentParser(description="Ember Protocol Simulated Agent (REST Client)")
+    parser.add_argument("--server", type=str, default="http://localhost:8000",
+                        help="Ember server URL (default: http://localhost:8000)")
+    parser.add_argument("--name", type=str, default="Echo",
+                        help="Agent name (default: Echo)")
+    parser.add_argument("--strategy", choices=["survival", "explore", "combat", "idle"],
+                        default="survival", help="Agent strategy (default: survival)")
+    parser.add_argument("--interval", type=float, default=2.0,
+                        help="Poll interval in seconds (default: 2.0)")
+    args = parser.parse_args()
 
-    server = HTTPServer(("0.0.0.0", port), SimAgentHandler)
-    logger.info(f"🤖 Sim Agent running on port {port}, strategy={strategy}")
-    logger.info(f"   Endpoint: http://localhost:{port}")
-    logger.info(f"   API Key:  sim-agent-key")
-    logger.info(f"   Press Ctrl+C to stop")
-
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        logger.info(f"\nSim Agent stopped after {brain.tick_count} ticks")
-        server.server_close()
+    client = SimAgentClient(
+        server_url=args.server,
+        name=args.name,
+        strategy=args.strategy,
+    )
+    client.run(poll_interval=args.interval)
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Ember Protocol Simulated Agent")
-    parser.add_argument("--port", type=int, default=9000, help="HTTP port (default: 9000)")
-    parser.add_argument("--strategy", choices=["survival", "explore", "combat", "idle"],
-                        default="survival", help="Agent strategy (default: survival)")
-    args = parser.parse_args()
-    run_server(args.port, args.strategy)
+    main()

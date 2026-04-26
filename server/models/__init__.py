@@ -358,10 +358,6 @@ class Agent:
     attributes: Attributes
     position: Position
     spawn_point: Position
-    endpoint: str
-    api_key: str
-    model_info: str = ""
-
     # State
     hp: int = 0
     energy: int = 100
@@ -393,6 +389,9 @@ class Agent:
     # Drop pod
     drop_pod_position: Optional[Position] = None
     drop_pod_deployed: bool = True
+
+    # Action queue (Agent-Pull: actions submitted between ticks)
+    pending_actions: list = field(default_factory=list)
 
     def __post_init__(self):
         if self.hp == 0:
@@ -429,6 +428,12 @@ class Agent:
 
     def is_alive(self) -> bool:
         return self.alive and self.hp > 0
+
+    @property
+    def initiative(self) -> int:
+        """Initiative for tick action resolution order. Higher AGI = acts first.
+        Ties broken by agent_id hash for determinism."""
+        return self.attributes.agility * 1000 + (hash(self.id) % 1000)
 
     def to_self_dict(self, day_phase: DayPhase, weather: WeatherType) -> dict:
         held = None

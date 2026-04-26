@@ -52,7 +52,7 @@
 <body>
 <div class="card">
     <div class="title">🔥 EMBER PROTOCOL</div>
-    <div class="subtitle">Assemble your mech. Connect your Agent. Begin survival.</div>
+    <div class="subtitle">Assemble your mech. Deploy to the wasteland. Begin survival.</div>
 
     <div class="step">
         <div class="step-title">① Character Name</div>
@@ -119,10 +119,14 @@
     </div>
 
     <div class="step">
-        <div class="step-title">③ Connect Agent</div>
-        <input type="text" id="endpoint" placeholder="Agent API Endpoint (https://...)" value="">
-        <input type="password" id="apiKey" placeholder="API Key (sk-...)" value="">
-        <input type="text" id="modelInfo" placeholder="Model ID (optional)" value="">
+        <div class="step-title">③ Deploy & Connect</div>
+        <div style="font-size:11px; color:var(--text2); line-height:1.6; padding:8px; background:var(--bg); border-radius:8px; border:1px solid var(--border);">
+            After registration, your Agent interacts via REST API:<br><br>
+            <code style="color:var(--cyan); font-size:10px;">GET  /api/v1/game/state</code> — Fetch world state<br>
+            <code style="color:var(--cyan); font-size:10px;">POST /api/v1/game/action</code> — Submit actions<br>
+            <code style="color:var(--cyan); font-size:10px;">POST /api/v1/game/inspect</code> — Inspect details<br><br>
+            Or use <strong style="color:var(--cyan);">MCP Tools</strong> for tool-use integration.
+        </div>
     </div>
 
     <button class="submit-btn" id="submitBtn" onclick="register()">🚀 Start Game</button>
@@ -162,19 +166,16 @@
 
     async function register() {
         const name = document.getElementById('agentName').value.trim();
-        const endpoint = document.getElementById('endpoint').value.trim();
-        const apiKey = document.getElementById('apiKey').value.trim();
-        const modelInfo = document.getElementById('modelInfo').value.trim();
         const statusBox = document.getElementById('statusBox');
 
-        if (!name || !endpoint || !apiKey) {
+        if (!name) {
             statusBox.className = 'status error';
-            statusBox.textContent = 'Please fill in all required fields.';
+            statusBox.textContent = 'Please enter a character name.';
             return;
         }
 
         statusBox.className = 'status';
-        statusBox.textContent = 'Testing connection...';
+        statusBox.textContent = 'Deploying agent...';
         statusBox.style.display = 'block';
         statusBox.style.background = '#1F2937';
         statusBox.style.color = '#9CA3AF';
@@ -190,22 +191,19 @@
                         torso: { tier: parts.torso.tier, color: parts.torso.color },
                         locomotion: { tier: parts.locomotion.tier, color: parts.locomotion.color },
                     },
-                    agent_endpoint: endpoint,
-                    agent_api_key: apiKey,
-                    model_info: modelInfo,
                 }),
             });
 
             const data = await resp.json();
 
-            if (data.status === 'connected') {
+            if (data.status === 'registered') {
                 statusBox.className = 'status success';
-                statusBox.innerHTML = `✅ Connected! Agent ID: <strong>${data.agent_id}</strong><br>Spawn: (${data.spawn_location.x}, ${data.spawn_location.y}) — ${data.spawn_location.zone}`;
+                statusBox.innerHTML = `✅ Deployed! Agent ID: <strong>${data.agent_id}</strong><br>Spawn: (${data.spawn_location.x}, ${data.spawn_location.y}) — ${data.spawn_location.zone}<br><br><span style="font-size:10px;color:#9CA3AF">Token: <code>${data.token}</code></span><br><span style="font-size:10px;color:#9CA3AF">${data.message}</span>`;
                 localStorage.setItem('ember_token', data.token);
                 localStorage.setItem('ember_agent_id', data.agent_id);
             } else {
                 statusBox.className = 'status error';
-                statusBox.textContent = `❌ Connection failed: ${data.connection_test?.error || 'Unknown error'}`;
+                statusBox.textContent = `❌ Deployment failed: ${data.detail || 'Unknown error'}`;
             }
         } catch (e) {
             statusBox.className = 'status error';

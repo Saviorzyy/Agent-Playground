@@ -204,7 +204,7 @@ if __name__ == "__main__":
         ("Balanced", Attributes(2, 2, 2)),
     ]
     for name, attrs in builds:
-        agent = engine.register_agent(name, attrs, "http://test", "key")
+        agent = engine.register_agent(name, attrs)
         # Spread agents slightly
         agent.position = Position(
             agent.position.x + hash(name) % 6 - 3,

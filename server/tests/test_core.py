@@ -118,7 +118,6 @@ class TestEquipment:
         agent = Agent(
             id="test", name="Test", attributes=attrs,
             position=Position(0, 0), spawn_point=Position(0, 0),
-            endpoint="http://test", api_key="test",
         )
         agent.inventory.add_item(ItemInstance(item_id="basic_excavator"), ITEM_DB)
         agent.inventory.remove_item("basic_excavator")
@@ -384,13 +383,11 @@ class TestCombat:
             id="attacker", name="Attacker",
             attributes=Attributes(2, 2, 2),
             position=Position(5, 5), spawn_point=Position(5, 5),
-            endpoint="http://test", api_key="test",
         )
         self.target = Agent(
             id="target", name="Target",
             attributes=Attributes(2, 2, 2),
             position=Position(6, 5), spawn_point=Position(6, 5),
-            endpoint="http://test", api_key="test",
         )
 
     def test_melee_range(self):
@@ -466,7 +463,7 @@ class TestGameEngine:
 
     def test_register_agent(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         assert agent.id is not None
         assert agent.tutorial_phase == 0
         assert agent.is_alive()
@@ -474,7 +471,7 @@ class TestGameEngine:
 
     def test_agent_starting_inventory(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         # Should have workbench + furnace items
         # (Note: these are placeholder items, real items need to be in ITEM_DB)
 
@@ -485,7 +482,7 @@ class TestGameEngine:
 
     def test_build_agent_state(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         state = self.engine.build_agent_state(agent)
         assert "self" in state
         assert "vicinity" in state
@@ -494,7 +491,7 @@ class TestGameEngine:
 
     def test_move_action(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         old_pos = (agent.position.x, agent.position.y)
 
         # Find a passable adjacent tile
@@ -513,7 +510,7 @@ class TestGameEngine:
 
     def test_equip_action(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         agent.inventory.add_item(ItemInstance(item_id="basic_excavator"), ITEM_DB)
 
         result = self.engine.resolve_action(agent, {
@@ -525,13 +522,13 @@ class TestGameEngine:
 
     def test_inspect_inventory(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         result = self.engine.resolve_action(agent, {"type": "inspect", "target": "inventory"}, 0)
         assert result.success
 
     def test_rest_action(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         agent.energy = 50
         result = self.engine.resolve_action(agent, {"type": "rest"}, 0)
         assert result.success
@@ -539,7 +536,7 @@ class TestGameEngine:
 
     def test_use_consumable(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         agent.hp = 50
         agent.inventory.add_item(ItemInstance(item_id="repair_kit"), ITEM_DB)
 
@@ -549,13 +546,127 @@ class TestGameEngine:
 
     def test_use_battery(self):
         attrs = Attributes(2, 2, 2)
-        agent = self.engine.register_agent("TestBot", attrs, "http://localhost", "key123")
+        agent = self.engine.register_agent("TestBot", attrs)
         agent.energy = 30
         agent.inventory.add_item(ItemInstance(item_id="battery"), ITEM_DB)
 
         result = self.engine.resolve_action(agent, {"type": "use", "item": "battery"}, 0)
         assert result.success
         assert agent.energy == 60  # 30 + 30
+
+
+class TestInitiativeSystem:
+    """Test AGI-based initiative ordering for tick action resolution."""
+
+    def test_higher_agi_acts_first(self):
+        """Agent with higher AGI should have higher initiative."""
+        fast = Agent(id="fast", name="Fast", attributes=Attributes(1, 3, 2),
+                     position=Position(0, 0), spawn_point=Position(0, 0))
+        slow = Agent(id="slow", name="Slow", attributes=Attributes(3, 1, 2),
+                     position=Position(1, 0), spawn_point=Position(1, 0))
+        assert fast.initiative > slow.initiative
+
+    def test_initiative_deterministic(self):
+        """Same agent always produces same initiative."""
+        agent = Agent(id="test-agent", name="Test", attributes=Attributes(2, 2, 2),
+                     position=Position(0, 0), spawn_point=Position(0, 0))
+        assert agent.initiative == agent.initiative
+
+    def test_initiative_formula(self):
+        """Initiative = agility * 1000 + (hash(id) % 1000)."""
+        agent = Agent(id="formula-test", name="Test", attributes=Attributes(2, 3, 1),
+                     position=Position(0, 0), spawn_point=Position(0, 0))
+        expected = 3 * 1000 + (hash("formula-test") % 1000)
+        assert agent.initiative == expected
+
+    def test_agi_tiebreak_by_id_hash(self):
+        """Two agents with same AGI have deterministic but different initiative."""
+        a1 = Agent(id="alpha", name="Alpha", attributes=Attributes(2, 2, 2),
+                   position=Position(0, 0), spawn_point=Position(0, 0))
+        a2 = Agent(id="beta", name="Beta", attributes=Attributes(2, 2, 2),
+                   position=Position(1, 0), spawn_point=Position(1, 0))
+        # Same AGI base, but hash(id) differs
+        assert a1.initiative != a2.initiative or a1.id == a2.id
+
+
+class TestActionQueue:
+    """Test Agent-Pull action queue mechanics."""
+
+    def setup_method(self):
+        from server.engine.game import GameEngine
+        self.engine = GameEngine(map_width=50, map_height=50, seed=42)
+
+    def test_submit_actions_queues(self):
+        """Actions are queued, not resolved immediately."""
+        attrs = Attributes(2, 2, 2)
+        agent = self.engine.register_agent("QueueBot", attrs)
+        actions = [{"type": "rest"}, {"type": "rest"}]
+        result = self.engine.submit_actions(agent.id, actions)
+        assert result is True
+        assert len(agent.pending_actions) == 2
+
+    def test_max_five_actions(self):
+        """Cannot queue more than 5 actions."""
+        attrs = Attributes(2, 2, 2)
+        agent = self.engine.register_agent("QueueBot", attrs)
+        # Fill up 5 slots
+        actions = [{"type": "rest"}] * 5
+        self.engine.submit_actions(agent.id, actions)
+        assert len(agent.pending_actions) == 5
+        # Try adding more
+        result = self.engine.submit_actions(agent.id, [{"type": "rest"}])
+        assert result is False
+
+    def test_dead_agent_cannot_submit(self):
+        """Dead agents cannot submit actions."""
+        attrs = Attributes(2, 2, 2)
+        agent = self.engine.register_agent("DeadBot", attrs)
+        agent.alive = False
+        agent.hp = 0
+        result = self.engine.submit_actions(agent.id, [{"type": "rest"}])
+        assert result is False
+
+    def test_offline_agent_cannot_submit(self):
+        """Offline agents cannot submit actions."""
+        attrs = Attributes(2, 2, 2)
+        agent = self.engine.register_agent("OffBot", attrs)
+        agent.status = "offline"
+        result = self.engine.submit_actions(agent.id, [{"type": "rest"}])
+        assert result is False
+
+    def test_resolve_tick_actions_initiative_order(self):
+        """Actions are resolved in initiative order within a tick."""
+        from server.models import TickResult
+        slow_attrs = Attributes(3, 1, 2)  # AGI=1
+        fast_attrs = Attributes(1, 3, 2)  # AGI=3
+        fast_agent = self.engine.register_agent("FastBot", fast_attrs)
+        slow_agent = self.engine.register_agent("SlowBot", slow_attrs)
+
+        # Both rest
+        self.engine.submit_actions(fast_agent.id, [{"type": "rest"}])
+        self.engine.submit_actions(slow_agent.id, [{"type": "rest"}])
+
+        tick_result = TickResult(tick=1)
+        self.engine.resolve_tick_actions(tick_result)
+
+        # Both should have results
+        assert fast_agent.id in tick_result.agent_results
+        assert slow_agent.id in tick_result.agent_results
+
+    def test_auto_rest_for_idle_agents(self):
+        """Agents with no submitted actions get auto-rest."""
+        from server.models import TickResult
+        attrs = Attributes(2, 2, 2)
+        agent = self.engine.register_agent("IdleBot", attrs)
+        agent.energy = 50
+
+        tick_result = TickResult(tick=1)
+        self.engine.resolve_tick_actions(tick_result)
+
+        # Agent should have auto-rest result
+        assert agent.id in tick_result.agent_results
+        assert tick_result.agent_results[agent.id][0].action_type == "rest"
+        assert agent.energy > 50  # Rest restored energy
 
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

@@ -10,7 +10,6 @@ import logging
 import time
 from typing import Optional
 import uuid
-import httpx
 
 from server.models import (
     Agent, Creature, Building, Tile, Position, ActionResult, TickResult,
@@ -60,8 +59,7 @@ class GameEngine:
 
     # ─── Agent Management ─────────────────────────────────────────
 
-    def register_agent(self, name: str, attrs: Attributes,
-                       endpoint: str, api_key: str, model_info: str = "") -> Agent:
+    def register_agent(self, name: str, attrs: Attributes) -> Agent:
         """Register a new agent, place drop pod."""
         agent_id = f"{name.lower().replace(' ', '-')}-{uuid.uuid4().hex[:4]}"
 
@@ -73,7 +71,6 @@ class GameEngine:
             id=agent_id, name=name, attributes=attrs,
             position=Position(spawn.x, spawn.y),
             spawn_point=pod_pos,
-            endpoint=endpoint, api_key=api_key, model_info=model_info,
             tutorial_phase=0,
             drop_pod_position=pod_pos,
         )
@@ -82,6 +79,7 @@ class GameEngine:
         self._place_starting_buildings(agent)
 
         self.agents[agent_id] = agent
+        agent.login_tick = self.current_tick
         logger.info(f"Agent registered: {agent_id} at ({spawn.x},{spawn.y})")
         return agent
 
@@ -177,71 +175,58 @@ class GameEngine:
         return result
 
     async def resolve_tick(self, tick_result: TickResult) -> dict[str, dict]:
-        """Collect agent responses and resolve actions. Returns state deltas per agent."""
-        deltas = {}
+        """Legacy compat — now uses resolve_tick_actions instead."""
+        self.resolve_tick_actions(tick_result)
+        return {}
 
-        # Push state to all online agents, collect responses
-        tasks = []
+    def resolve_tick_actions(self, tick_result: TickResult):
+        """Resolve all queued agent actions in initiative order.
+        Higher initiative (AGI-based) agents act first within each tick.
+        Actions are resolved sequentially, so earlier agents' effects
+        are visible to later agents in the same tick."""
+
+        # Collect all agents with pending actions, sorted by initiative (descending)
+        agents_with_actions = []
         for agent_id, agent in self.agents.items():
-            if agent.status != "offline" and agent.is_alive():
-                tasks.append(self.push_state_to_agent(agent))
+            if agent.pending_actions and agent.is_alive() and agent.status != "offline":
+                agents_with_actions.append(agent)
 
-        if not tasks:
-            return deltas
+        # Sort by initiative descending (higher initiative = acts first)
+        agents_with_actions.sort(key=lambda a: a.initiative, reverse=True)
 
-        # Use asyncio.gather for parallel push
-        import asyncio
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for agent in agents_with_actions:
+            actions = agent.pending_actions[:5]  # Max 5 actions per tick
+            agent.pending_actions = []  # Clear queue
+            tick_result.agent_results[agent.id] = []
 
-        for agent_id, result in zip(
-            [aid for aid, a in self.agents.items() if a.status != "offline" and a.is_alive()],
-            results
-        ):
-            if isinstance(result, Exception):
-                logger.warning(f"Agent {agent_id} failed: {result}")
-                continue
-            if result and isinstance(result, dict):
-                actions = result.get("actions", [])
-                tick_result.agent_results[agent_id] = []
-                agent = self.agents.get(agent_id)
-                if agent:
-                    for i, action in enumerate(actions):
-                        ar = self.resolve_action(agent, action, i)
-                        tick_result.agent_results[agent_id].append(ar)
-                        if not ar.success:
-                            break
-                    agent.last_response_tick = self.current_tick
+            for i, action in enumerate(actions):
+                ar = self.resolve_action(agent, action, i)
+                tick_result.agent_results[agent.id].append(ar)
+                if not ar.success:
+                    break
 
-        return deltas
+            agent.last_response_tick = self.current_tick
 
-    async def push_and_collect_all(self) -> dict[str, list[dict]]:
-        """Push state to all online agents and collect their action responses.
-        Returns dict of agent_id -> list of action dicts."""
-        import asyncio
-        collected: dict[str, list[dict]] = {}
-
-        tasks = []
-        agent_ids = []
+        # Agents with no actions submitted this tick get auto-rest (if alive and online)
         for agent_id, agent in self.agents.items():
-            if agent.status != "offline" and agent.is_alive():
-                tasks.append(self.push_state_to_agent(agent))
-                agent_ids.append(agent_id)
+            if agent.id not in tick_result.agent_results and agent.is_alive() and agent.status != "offline":
+                # Auto-rest for idle agents
+                ar = self.resolve_action(agent, {"type": "rest"}, 0)
+                tick_result.agent_results[agent.id] = [ar]
+                agent.last_response_tick = self.current_tick
 
-        if not tasks:
-            return collected
-
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for agent_id, result in zip(agent_ids, results):
-            if isinstance(result, Exception):
-                logger.warning(f"Agent {agent_id} push failed: {result}")
-                continue
-            if result and isinstance(result, dict):
-                actions = result.get("actions", [])
-                if isinstance(actions, list):
-                    collected[agent_id] = actions
-
-        return collected
+    def submit_actions(self, agent_id: str, actions: list[dict]) -> bool:
+        """Queue actions for an agent to be resolved at next tick.
+        Returns False if agent cannot accept actions."""
+        agent = self.agents.get(agent_id)
+        if not agent or not agent.is_alive():
+            return False
+        if agent.status == "offline":
+            return False
+        if len(agent.pending_actions) >= 5:
+            return False
+        agent.pending_actions.extend(actions[:5 - len(agent.pending_actions)])
+        return True
 
     # ─── Action Resolution ────────────────────────────────────────
 
@@ -1305,36 +1290,6 @@ class GameEngine:
         }
 
     # ─── Agent Communication ──────────────────────────────────────
-
-    async def push_state_to_agent(self, agent: Agent) -> Optional[dict]:
-        """Push game state to agent endpoint, get action response."""
-        state = self.build_agent_state(agent)
-        messages = [
-            {"role": "system", "content": f"[Ember Protocol] Game State Update — Tick {self.current_tick}"},
-            {"role": "user", "content": json.dumps(state)},
-        ]
-
-        try:
-            async with httpx.AsyncClient(timeout=1.8) as client:
-                resp = await client.post(
-                    agent.endpoint,
-                    headers={"Authorization": f"Bearer {agent.api_key}"},
-                    json={
-                        "model": agent.model_info or "agent",
-                        "messages": messages,
-                        "response_format": {"type": "json_object"},
-                    },
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-                    try:
-                        return json.loads(content)
-                    except json.JSONDecodeError:
-                        return None
-        except Exception as e:
-            logger.warning(f"Failed to push state to {agent.id}: {e}")
-            return None
 
     def get_observer_state(self) -> dict:
         """Get full world state for observer UI."""
