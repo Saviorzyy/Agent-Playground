@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from server.engine.game import GameEngine
 from server.models import Attributes, Position, Agent, TICK_INTERVAL_SECONDS
+from server.models.items import ITEM_DB
 
 logger = logging.getLogger("ember.api")
 
@@ -253,8 +254,7 @@ async def inspect(req: InspectRequest, agent_id: str = Depends(verify_token)):
     target = req.target
 
     if target == "inventory":
-        return {"target": "inventory", "data": agent.inventory.to_detail_dict(
-            __import__('server.models.items', fromlist=['ITEM_DB']).ITEM_DB)}
+        return {"target": "inventory", "data": agent.inventory.to_detail_dict(ITEM_DB)}
     elif target == "self":
         return {"target": "self", "data": {
             "id": agent.id, "name": agent.name,
@@ -262,8 +262,7 @@ async def inspect(req: InspectRequest, agent_id: str = Depends(verify_token)):
             "energy": agent.energy, "max_energy": agent.max_energy,
             "attributes": agent.attributes.to_dict(),
             "position": agent.position.to_dict(),
-            "equipment": agent.equipment.to_dict(
-                __import__('server.models.items', fromlist=['ITEM_DB']).ITEM_DB),
+            "equipment": agent.equipment.to_dict(ITEM_DB),
             "backup_bodies": agent.backup_bodies,
         }}
     elif target == "recipes":

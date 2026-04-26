@@ -9,7 +9,7 @@ from typing import Optional
 
 from server.models import (
     Agent, Creature, Position, ActionResult, DayPhase, WeatherType,
-    ActionType, EquipmentSlot,
+    ActionType, EquipmentSlot, ItemCategory,
 )
 from server.models.items import ITEM_DB, ItemDef
 
@@ -112,7 +112,7 @@ def get_unarmed_weapon() -> ItemDef:
     """Return a virtual unarmed weapon definition."""
     return ItemDef(
         id="unarmed", name="Unarmed", name_zh="徒手",
-        category=__import__('server.models', fromlist=['ItemCategory']).ItemCategory.WEAPON,
+        category=ItemCategory.WEAPON,
         weapon_type="melee", damage=2, attack_range=1, optimal_range=1,
         energy_cost_attack=2,
     )

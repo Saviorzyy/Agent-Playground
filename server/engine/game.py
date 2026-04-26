@@ -7,6 +7,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import time
 from typing import Optional
 import uuid
@@ -949,7 +950,7 @@ class GameEngine:
 
         if len(tile.ground_items) >= MAX_GROUND_ITEMS_PER_TILE:
             return ActionResult(idx, "drop", False, error_code="INVALID_TARGET",
-                                detail="Ground full (max 3 piles)")
+                                detail=f"Ground full (max {MAX_GROUND_ITEMS_PER_TILE} piles)")
 
         agent.inventory.remove_item(item_id, amount)
         tile.ground_items.append(ItemInstance(item_id=item_id, amount=amount))
@@ -1067,8 +1068,7 @@ class GameEngine:
                     agent.active_effects = [e for e in agent.active_effects if e.effect_id != "radiation"]
                     agent.active_effects.append(ActiveEffect("radiation", "Radiation (-2 HP/tick)", 2))
             elif prob > 0:
-                import random as rng
-                if rng.random() < prob:
+                if random.random() < prob:
                     if not self.world.is_in_enclosure(agent.position.x, agent.position.y):
                         agent.active_effects = [e for e in agent.active_effects if e.effect_id != "radiation"]
                         agent.active_effects.append(ActiveEffect("radiation", "Radiation (-2 HP/tick)", 2))
@@ -1113,9 +1113,8 @@ class GameEngine:
                         break
                 else:
                     # Patrol - random movement
-                    import random as rng
-                    if rng.random() < 0.3:
-                        dx, dy = rng.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
+                    if random.random() < 0.3:
+                        dx, dy = random.choice([(0, 1), (0, -1), (1, 0), (-1, 0)])
                         nx, ny = creature.position.x + dx, creature.position.y + dy
                         if self.world.in_bounds(nx, ny):
                             creature.position = Position(nx, ny)
@@ -1164,6 +1163,31 @@ class GameEngine:
                         creature.state = CreatureState.PATROL
                 else:
                     creature.state = CreatureState.CHASE
+
+            elif creature.state == CreatureState.COUNTER_ATTACK:
+                # Counter-attack: immediately attack the aggressor if in range
+                if not creature.aggro_list:
+                    creature.state = CreatureState.PATROL
+                    continue
+                target = self.agents.get(creature.aggro_list[-1])  # Last attacker
+                if not target or not target.is_alive():
+                    creature.aggro_list.pop()
+                    creature.state = CreatureState.PATROL
+                    continue
+                dist = creature.position.manhattan_distance(target.position)
+                if dist <= 1:
+                    target.hp -= 5  # Default creature damage
+                    if target.hp <= 0:
+                        target.hp = 0
+                        target.alive = False
+                        target.status = "dead"
+                        self._handle_death(target)
+                        creature.aggro_list = [a for a in creature.aggro_list if a != target.id]
+                # After counter-attack, switch to chase/patrol
+                if creature.aggro_list:
+                    creature.state = CreatureState.CHASE
+                else:
+                    creature.state = CreatureState.PATROL
 
     def _check_heartbeats(self):
         """Check for idle agents, advance travel, auto-logout."""
