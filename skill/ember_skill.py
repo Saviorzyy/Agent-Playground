@@ -268,6 +268,9 @@ def main():
         if cfg:
             cfg.update({"token": args.token, "agent_id": data["agent_id"], "agent_name": args.name, "server": args.server})
             _save_config(cfg)
+        # --register exits after printing token. Use separate command to play.
+        print("Registration complete. To play: python3 ember_skill.py --token \"{}\" --mode stdio".format(args.token), flush=True)
+        sys.exit(0)
 
     # ── Resolve token ──
     if not args.token:
