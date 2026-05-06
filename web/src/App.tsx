@@ -93,26 +93,22 @@ export default function App() {
     return () => clearInterval(interval)
   }, [fetchStatus, fetchAgents, fetchMap, fetchEvents])
 
-  const handleRegister = async (name: string, chassis: any) => {
-    try {
-      const res = await fetch('/api/v1/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ agent_name: name, chassis }),
-      })
-      if (res.ok) {
-        const data = await res.json()
-        setToken(data.game_token)
-        setRegData(data)
-        setShowRegister(false)
-        fetchAgents()
-      } else {
-        const err = await res.json()
-        alert(err.error || '注册失败')
-      }
-    } catch (e) {
-      alert('无法连接到游戏服务器')
-    }
+  const handleRegister = (name: string, chassis: any) => {
+    // Don't register on server yet — generate prompt for agent to self-register
+    const headTier = chassis.head?.tier || 'mid'
+    const torsoTier = chassis.torso?.tier || 'mid'
+    const locoTier = chassis.locomotion?.tier || 'low'
+
+    // Generate a placeholder regData (no actual server registration)
+    setRegData({
+      agent_name: name,
+      head: headTier,
+      torso: torsoTier,
+      loco: locoTier,
+      server: 'ws://localhost:8765',
+    })
+    setToken('__PROMPT_ONLY__')  // Sentinel: prompt-only mode
+    setShowRegister(false)
   }
 
   return (
@@ -172,63 +168,92 @@ export default function App() {
         </div>
       </div>
 
-      {/* Registration success — Copy-Paste Prompt */}
-      {token && regData && (() => {
-        const skillPrompt = `我需要你连接到 Ember Protocol（余烬协议）游戏服务器。
+      {/* Prompt-only mode — Copy prompt to agent, agent self-registers */}
+      {token === '__PROMPT_ONLY__' && regData && (() => {
+        const skillRawUrl = 'https://raw.githubusercontent.com/Saviorzyy/Ember-Protocol-Player/main/ember_skill.py'
+        const mcpRawUrl = 'https://raw.githubusercontent.com/Saviorzyy/Ember-Protocol-Player/main/ember_mcp_server.py'
+        const name = regData.agent_name
+        const head = regData.head
+        const torso = regData.torso
+        const loco = regData.loco
 
-## 接入方式：Gateway Skill
+        const skillPrompt = `请帮我连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。
 
-请使用 ember_skill.py 文件，按以下方式连接：
+## 步骤
 
-1. 确保已安装依赖: pip install websockets anthropic requests
-2. 设置你的 LLM API Key（如果还没设置）
-3. 运行以下命令接入游戏：
+### 1. 下载并安装
+\`\`\`bash
+curl -o ember_skill.py ${skillRawUrl}
+pip install websockets anthropic requests
+\`\`\`
 
+### 2. 测试服务器连通性
+\`\`\`bash
+curl -s http://localhost:8765/api/v1/status
+\`\`\`
+确认服务器在线后继续。
+
+### 3. 注册角色并开始游戏
 \`\`\`bash
 export ANTHROPIC_API_KEY="<你的LLM API Key>"
 python3 ember_skill.py \\
-  --token "${token}" \\
+  --register \\
+  --name "${name}" \\
+  --head ${head} \\
+  --torso ${torso} \\
+  --loco ${loco} \\
   --server ws://localhost:8765
 \`\`\`
 
-游戏服务器地址: ws://localhost:8765
-Token: ${token}
-角色ID: ${regData.agent_id}
-出生点: (${regData.spawn_location.x}, ${regData.spawn_location.y})
+角色配置: 名称=${name} 头部=${head}(PER) 躯干=${torso}(CON) 运动=${loco}(AGI)
 
-请立刻执行连接并开始探索游戏世界。你的角色已经在降落仓中苏醒，初始背包有工作台、熔炉和有机燃料。教程阶段为Phase 0，查看背包(inspect inventory)后即可进入自由探索模式。`
+请按顺序执行以上步骤。先测试服务器是否在线，在线后再注册角色。不要在服务器离线时注册。`
 
-        const mcpPrompt = `我需要你通过 MCP Server 连接到 Ember Protocol（余烬协议）游戏服务器。
+        const mcpPrompt = `请帮我通过 MCP Server 连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。
 
-## 接入方式：MCP Server
+## 步骤
 
-请在你的 MCP 配置中添加以下 ember server：
+### 1. 下载 MCP Server 并安装依赖
+\`\`\`bash
+curl -o ember_mcp_server.py ${mcpRawUrl}
+pip install websockets mcp requests
+\`\`\`
+
+### 2. 测试服务器连通性
+\`\`\`bash
+curl -s http://localhost:8765/api/v1/status
+\`\`\`
+确认服务器在线（返回JSON状态）后继续。
+
+### 3. 注册角色
+\`\`\`bash
+python3 ember_mcp_server.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --api-url http://localhost:8765
+\`\`\`
+运行后会输出 game_token，保存此 token。
+
+### 4. 配置 MCP Server
+用上一步获取的 token，在 MCP 配置中添加：
 
 \`\`\`yaml
 mcp_servers:
   ember:
     command: python3
     args:
-      - "/path/to/ember_mcp_server.py"
+      - "ember_mcp_server.py"
       - "--token"
-      - "${token}"
+      - "<上一步输出的token>"
       - "--server"
       - "ws://localhost:8765"
 \`\`\`
 
-配置完成后，重启你的 Agent。你将获得以下 MCP 工具：
-- ember_tick: 获取游戏状态
-- ember_act: 提交行动
-- ember_status: 查看自身状态
+### 5. 重启并开始游戏
+配置完成后重启 Agent，然后调用 ember_tick 获取游戏状态，调用 ember_act 提交行动。
 
-游戏服务器: ws://localhost:8765
-Token: ${token}
-角色ID: ${regData.agent_id}
+角色配置: 名称=${name} 头部=${head}(PER) 躯干=${torso}(CON) 运动=${loco}(AGI)
 
-请立刻调用 ember_tick 获取游戏状态，然后根据状态决定行动。你的角色在降落仓中苏醒，初始背包有工作台、熔炉和有机燃料×5。先查看背包，然后走出降落仓探索。`
+重要: 先测试服务器是否在线，在线后再注册角色。`
 
         const promptText = copyMode === 'skill' ? skillPrompt : mcpPrompt
-        const skillUrl = 'https://github.com/Saviorzyy/Ember-Protocol-Player'
 
         return (
         <div style={{
@@ -239,11 +264,14 @@ Token: ${token}
         }}>
           <div style={{
             background: '#11151f', border: '1px solid #1e2533',
-            borderRadius: 8, padding: 24, maxWidth: 620, width: '100%',
+            borderRadius: 8, padding: 24, maxWidth: 640, width: '100%',
           }}>
-            <h2 style={{ color: '#00d4aa', marginBottom: 2, fontSize: 18 }}>✅ 角色创建成功</h2>
-            <p style={{ color: '#888', fontSize: 11, marginBottom: 14 }}>
-              {regData.agent_id} · 出生点 ({regData.spawn_location.x}, {regData.spawn_location.y}) · HP 110 · 能量 100
+            <h2 style={{ color: '#00d4aa', marginBottom: 4, fontSize: 18 }}>📋 复制 Prompt 到你的 Agent</h2>
+            <p style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>
+              角色「{name}」尚未创建 — Agent 会先测试服务器连接，通过后再注册
+            </p>
+            <p style={{ color: '#ff8', fontSize: 10, marginBottom: 14 }}>
+              ⚠️ 角色只有在 Agent 成功连接服务器后才会被创建，避免产生无效角色
             </p>
 
             {/* Mode switch */}
@@ -265,12 +293,12 @@ Token: ${token}
             {/* Prompt block */}
             <div style={{ marginBottom: 14 }}>
               <div style={{ color: '#aaa', fontSize: 11, marginBottom: 6 }}>
-                📋 复制以下内容，粘贴到你的 Agent 对话框（Hermes / Claude / ChatGPT 等）：
+                📋 复制以下内容，粘贴到你的 Agent 对话框：
               </div>
               <pre style={{
                 background: '#0a0e17', padding: 14, borderRadius: 6, color: '#ccc',
                 fontSize: 11, lineHeight: '17px', whiteSpace: 'pre-wrap',
-                border: '1px solid #2a3040', maxHeight: 280, overflow: 'auto',
+                border: '1px solid #2a3040', maxHeight: 300, overflow: 'auto',
               }}>
                 {promptText}
               </pre>
@@ -291,23 +319,81 @@ Token: ${token}
               {copied ? '✅ 已复制！粘贴到 Agent 对话框中' : '📋 一键复制 Prompt'}
             </button>
 
-            {/* Links + close */}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button onClick={() => { setToken(''); setRegData(null); setCopied(false) }} style={{
-                flex: 1, padding: '8px', background: '#333', color: '#ccc',
-                border: 'none', borderRadius: 4, cursor: 'pointer',
-                fontFamily: 'inherit', fontSize: 12,
+            {/* Close only — no download button since prompt has the link */}
+            <button onClick={() => { setToken(''); setRegData(null); setCopied(false) }} style={{
+              width: '100%', padding: '8px', background: '#333', color: '#ccc',
+              border: 'none', borderRadius: 4, cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: 12,
+            }}>
+              关闭
+            </button>
+          </div>
+        </div>
+      )})()}
+
+      {/* Legacy: post-registration flow (when token is real, not __PROMPT_ONLY__) */}
+      {token && token !== '__PROMPT_ONLY__' && regData && regData.agent_id && (() => {
+        const skillRawUrl = 'https://raw.githubusercontent.com/Saviorzyy/Ember-Protocol-Player/main/ember_skill.py'
+        const skillPrompt = `我需要你连接到 Ember Protocol 游戏服务器。
+
+\`\`\`bash
+curl -o ember_skill.py ${skillRawUrl}
+pip install websockets anthropic requests
+export ANTHROPIC_API_KEY="<你的LLM API Key>"
+python3 ember_skill.py --token "${token}" --server ws://localhost:8765
+\`\`\`
+
+Token: ${token}
+角色ID: ${regData.agent_id}
+
+请下载文件并连接。角色已在降落仓中苏醒，背包有工作台、熔炉和有机燃料×5。`
+
+        const promptText = skillPrompt
+
+        return (
+        <div style={{
+          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
+          background: 'rgba(0,0,0,0.85)', display: 'flex',
+          alignItems: 'center', justifyContent: 'center', zIndex: 100,
+          overflow: 'auto', padding: '20px',
+        }}>
+          <div style={{
+            background: '#11151f', border: '1px solid #1e2533',
+            borderRadius: 8, padding: 24, maxWidth: 600, width: '100%',
+          }}>
+            <h2 style={{ color: '#00d4aa', marginBottom: 8, fontSize: 18 }}>✅ 角色已创建</h2>
+            <p style={{ color: '#888', fontSize: 11, marginBottom: 14 }}>
+              {regData.agent_id} · 出生点 ({regData.spawn_location?.x}, {regData.spawn_location?.y})
+            </p>
+            <div style={{ marginBottom: 14 }}>
+              <pre style={{
+                background: '#0a0e17', padding: 14, borderRadius: 6, color: '#ccc',
+                fontSize: 11, lineHeight: '17px', whiteSpace: 'pre-wrap',
+                border: '1px solid #2a3040', maxHeight: 240, overflow: 'auto',
               }}>
-                关闭
-              </button>
-              <a href={skillUrl} target="_blank" rel="noopener" style={{
-                flex: 1, padding: '8px', background: '#1a1f2a', color: '#0099ff',
-                border: '1px solid #2a3040', borderRadius: 4, cursor: 'pointer',
-                fontFamily: 'inherit', fontSize: 12, textAlign: 'center', textDecoration: 'none',
-              }}>
-                📦 下载 Skill 文件
-              </a>
+                {promptText}
+              </pre>
             </div>
+            <button onClick={() => {
+              navigator.clipboard.writeText(promptText).then(() => {
+                setCopied(true)
+                setTimeout(() => setCopied(false), 2000)
+              })
+            }} style={{
+              background: copied ? '#0a3' : '#00d4aa', color: '#0a0e17', border: 'none',
+              padding: '12px 24px', borderRadius: 6, cursor: 'pointer',
+              fontFamily: 'inherit', fontWeight: 'bold', width: '100%', fontSize: 14,
+              marginBottom: 10,
+            }}>
+              {copied ? '✅ 已复制！' : '📋 一键复制 Prompt'}
+            </button>
+            <button onClick={() => { setToken(''); setRegData(null); setCopied(false) }} style={{
+              width: '100%', padding: '8px', background: '#333', color: '#ccc',
+              border: 'none', borderRadius: 4, cursor: 'pointer',
+              fontFamily: 'inherit', fontSize: 12,
+            }}>
+              关闭
+            </button>
           </div>
         </div>
       )})()}

@@ -249,6 +249,9 @@ async def main():
     parser.add_argument("--server", default="ws://localhost:8765", help="Game server WS URL")
     parser.add_argument("--register", action="store_true", help="Register new agent first")
     parser.add_argument("--name", default="Hermes", help="Agent name (for --register)")
+    parser.add_argument("--head", default="high", choices=["high", "mid", "low"], help="头部等级")
+    parser.add_argument("--torso", default="mid", choices=["high", "mid", "low"], help="躯干等级")
+    parser.add_argument("--loco", default="low", choices=["high", "mid", "low"], help="运动机构等级")
     parser.add_argument("--api-url", default="http://localhost:8765", help="HTTP API URL")
     args = parser.parse_args()
 
@@ -256,7 +259,11 @@ async def main():
         import requests as req
         resp = req.post(f"{args.api_url}/api/v1/auth/register", json={
             "agent_name": args.name,
-            "chassis": {"head": {"tier": "high"}, "torso": {"tier": "mid"}, "locomotion": {"tier": "low"}},
+            "chassis": {
+                "head": {"tier": args.head},
+                "torso": {"tier": args.torso},
+                "locomotion": {"tier": args.loco},
+            },
         }, timeout=10)
         if resp.status_code != 200:
             print(f"Register failed: {resp.text}", file=sys.stderr)

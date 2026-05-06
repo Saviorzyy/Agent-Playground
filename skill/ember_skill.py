@@ -546,6 +546,9 @@ Examples:
     parser.add_argument("--register", action="store_true", help="注册新角色并打印 token")
     parser.add_argument("--setup", action="store_true", help="交互式初始化向导（推荐首次使用）")
     parser.add_argument("--name", default="EmberAgent", help="Agent 名称")
+    parser.add_argument("--head", default="high", choices=["high", "mid", "low"], help="头部等级 (PER)")
+    parser.add_argument("--torso", default="mid", choices=["high", "mid", "low"], help="躯干等级 (CON)")
+    parser.add_argument("--loco", default="low", choices=["high", "mid", "low"], help="运动机构等级 (AGI)")
     parser.add_argument("--api-url", default="http://localhost:8765", help="HTTP API 地址")
     parser.add_argument("--config", default="", help=f"配置文件路径 (默认: {_config_path()})")
     args = parser.parse_args()
@@ -569,7 +572,12 @@ Examples:
 
     # ── Register mode ──
     if args.register:
-        data = EmberSkill.register(args.name, server_url=args.api_url)
+        chassis = {
+            "head": {"tier": args.head},
+            "torso": {"tier": args.torso},
+            "locomotion": {"tier": args.loco},
+        }
+        data = EmberSkill.register(args.name, chassis=chassis, server_url=args.api_url)
         args.token = data["game_token"]
         print(f"Registered: {data['agent_id']}")
         print(f"Token: {args.token}")

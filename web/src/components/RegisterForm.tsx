@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 const TIERS = ['low', 'mid', 'high'] as const
 const TIER_LABELS: Record<string, string> = { low: '基础', mid: '标准', high: '高级' }
@@ -6,9 +6,9 @@ const TIER_EMOJI: Record<string, string> = { low: '●', mid: '●●', high: '�
 const TIER_COSTS: Record<string, number> = { low: 1, mid: 2, high: 3 }
 
 const PARTS = [
-  { key: 'head', label: '头部 (感知 PER)', tiers: { high: 3, mid: 2, low: 1 } },
-  { key: 'torso', label: '躯干 (体质 CON)', tiers: { high: 3, mid: 2, low: 1 } },
-  { key: 'locomotion', label: '运动机构 (敏捷 AGI)', tiers: { high: 3, mid: 2, low: 1 } },
+  { key: 'head', label: '头部 → 感知 PER (视野范围)', tiers: { high: 3, mid: 2, low: 1 } },
+  { key: 'torso', label: '躯干 → 体质 CON (HP上限)', tiers: { high: 3, mid: 2, low: 1 } },
+  { key: 'locomotion', label: '运动机构 → 敏捷 AGI (移动速度)', tiers: { high: 3, mid: 2, low: 1 } },
 ]
 
 interface RegisterFormProps {
@@ -19,18 +19,45 @@ interface RegisterFormProps {
 export default function RegisterForm({ onSubmit, onCancel }: RegisterFormProps) {
   const [name, setName] = useState('')
   const [chassis, setChassis] = useState({
-    head: { tier: 'mid', color: 'red' },
+    head: { tier: 'high', color: 'red' },
     torso: { tier: 'mid', color: 'black' },
     locomotion: { tier: 'low', color: 'blue' },
   })
   const [loading, setLoading] = useState(false)
+  const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
+  const [testMsg, setTestMsg] = useState('')
+  const [serverInfo, setServerInfo] = useState<any>(null)
 
   const totalCost = TIER_COSTS[chassis.head.tier] + TIER_COSTS[chassis.torso.tier] + TIER_COSTS[chassis.locomotion.tier]
   const budgetOk = totalCost <= 6
 
+  // Auto-test on mount
+  useEffect(() => {
+    testConnection()
+  }, [])
+
+  const testConnection = async () => {
+    setTestStatus('testing')
+    setTestMsg('正在检测游戏服务器...')
+    try {
+      const resp = await fetch('/api/v1/status')
+      if (resp.ok) {
+        const data = await resp.json()
+        setServerInfo(data)
+        setTestStatus('ok')
+        setTestMsg(`服务器在线 · Tick ${data.tick} · ${data.agents_online}/${data.agents_total} Agent 在线`)
+      } else {
+        setTestStatus('fail')
+        setTestMsg(`服务器返回 HTTP ${resp.status}`)
+      }
+    } catch (e) {
+      setTestStatus('fail')
+      setTestMsg('无法连接到游戏服务器，请确认服务器已启动')
+    }
+  }
+
   const handleSubmit = async () => {
-    if (!name.trim()) return
-    if (!budgetOk) return
+    if (!name.trim() || !budgetOk || testStatus !== 'ok') return
     setLoading(true)
     await onSubmit(name.trim(), chassis)
     setLoading(false)
@@ -41,7 +68,32 @@ export default function RegisterForm({ onSubmit, onCancel }: RegisterFormProps) 
       background: '#11151f', border: '1px solid #1e2533',
       borderRadius: 8, padding: 24, maxWidth: 480, width: '100%',
     }}>
-      <h2 style={{ color: '#00d4aa', fontSize: 16, marginBottom: 20 }}>🚀 创建角色</h2>
+      <h2 style={{ color: '#00d4aa', fontSize: 16, marginBottom: 8 }}>🚀 创建角色</h2>
+
+      {/* Connection test */}
+      <div style={{
+        marginBottom: 16, padding: 10, borderRadius: 6,
+        background: testStatus === 'ok' ? '#0a2a1a' : testStatus === 'fail' ? '#2a0a0a' : '#1a1e2a',
+        border: `1px solid ${testStatus === 'ok' ? '#0a3' : testStatus === 'fail' ? '#a30' : '#2a3040'}`,
+        display: 'flex', alignItems: 'center', gap: 10,
+      }}>
+        <span style={{ fontSize: 18 }}>
+          {testStatus === 'testing' ? '⏳' : testStatus === 'ok' ? '✅' : testStatus === 'fail' ? '❌' : '🔌'}
+        </span>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontSize: 12, color: testStatus === 'ok' ? '#0c0' : testStatus === 'fail' ? '#f44' : '#888', fontWeight: 'bold' }}>
+            {testStatus === 'testing' ? '连接测试中...' : testStatus === 'ok' ? '服务器连接正常' : testStatus === 'fail' ? '服务器连接失败' : '等待连接测试'}
+          </div>
+          <div style={{ fontSize: 10, color: '#888', marginTop: 2 }}>{testMsg}</div>
+        </div>
+        <button onClick={testConnection} disabled={testStatus === 'testing'} style={{
+          padding: '4px 10px', background: '#1a1e2a', color: '#888',
+          border: '1px solid #2a3040', borderRadius: 4, cursor: 'pointer',
+          fontFamily: 'inherit', fontSize: 10,
+        }}>
+          {testStatus === 'testing' ? '...' : '🔄 重测'}
+        </button>
+      </div>
 
       {/* Name */}
       <div style={{ marginBottom: 16 }}>
@@ -108,28 +160,26 @@ export default function RegisterForm({ onSubmit, onCancel }: RegisterFormProps) 
 
       {/* Buttons */}
       <div style={{ display: 'flex', gap: 8 }}>
-        <button
-          onClick={onCancel}
-          style={{
-            flex: 1, padding: '10px', background: '#333', color: '#ccc',
-            border: 'none', borderRadius: 4, cursor: 'pointer',
-            fontFamily: 'inherit', fontSize: 14,
-          }}
-        >
+        <button onClick={onCancel} style={{
+          flex: 1, padding: '10px', background: '#333', color: '#ccc',
+          border: 'none', borderRadius: 4, cursor: 'pointer',
+          fontFamily: 'inherit', fontSize: 14,
+        }}>
           取消
         </button>
         <button
           onClick={handleSubmit}
-          disabled={!name.trim() || !budgetOk || loading}
+          disabled={!name.trim() || !budgetOk || testStatus !== 'ok' || loading}
           style={{
             flex: 2, padding: '10px',
-            background: (name.trim() && budgetOk) ? '#00d4aa' : '#333',
-            color: (name.trim() && budgetOk) ? '#0a0e17' : '#666',
-            border: 'none', borderRadius: 4, cursor: (name.trim() && budgetOk) ? 'pointer' : 'default',
+            background: (name.trim() && budgetOk && testStatus === 'ok') ? '#00d4aa' : '#333',
+            color: (name.trim() && budgetOk && testStatus === 'ok') ? '#0a0e17' : '#666',
+            border: 'none', borderRadius: 4,
+            cursor: (name.trim() && budgetOk && testStatus === 'ok') ? 'pointer' : 'not-allowed',
             fontFamily: 'inherit', fontSize: 14, fontWeight: 'bold',
           }}
         >
-          {loading ? '创建中...' : '🚀 创建角色'}
+          {loading ? '创建中...' : testStatus !== 'ok' ? '等待连接测试...' : '🚀 创建角色'}
         </button>
       </div>
     </div>
