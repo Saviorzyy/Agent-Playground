@@ -177,25 +177,24 @@ export default function App() {
         const torso = regData.torso
         const loco = regData.loco
 
-        const skillPrompt = `请帮我连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。
+        const skillPrompt = `请帮我连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。使用 stdio 桥接模式，无需额外 API Key——你用你自己的 LLM 决策。
 
 ## 步骤
 
-### 1. 下载并安装
+### 1. 下载并安装（只需 websockets + requests，不需要 LLM SDK）
 \`\`\`bash
 curl -o ember_skill.py ${skillRawUrl}
-pip install websockets anthropic requests
+pip install websockets requests
 \`\`\`
 
 ### 2. 测试服务器连通性
 \`\`\`bash
 curl -s http://localhost:8765/api/v1/status
 \`\`\`
-确认服务器在线后继续。
+确认返回 JSON 且在线后继续。
 
-### 3. 注册角色并开始游戏
+### 3. 注册角色
 \`\`\`bash
-export ANTHROPIC_API_KEY="<你的LLM API Key>"
 python3 ember_skill.py \\
   --register \\
   --name "${name}" \\
@@ -204,16 +203,31 @@ python3 ember_skill.py \\
   --loco ${loco} \\
   --server ws://localhost:8765
 \`\`\`
+会输出 game_token，保存它。
 
-角色配置: 名称=${name} 头部=${head}(PER) 躯干=${torso}(CON) 运动=${loco}(AGI)
+### 4. 启动 stdio 桥接
+\`\`\`bash
+python3 ember_skill.py --token "<上一步的token>" --mode stdio --server ws://localhost:8765
+\`\`\`
 
-请按顺序执行以上步骤。先测试服务器是否在线，在线后再注册角色。不要在服务器离线时注册。`
+stdio 模式的工作方式：
+- 每 tick，脚本向 stdout 输出一行 JSON（包含游戏状态）
+- 你读取这行 JSON，用你的 LLM 决策行动
+- 把行动以 JSON 数组格式写入 stdin
+- 脚本发送行动到服务器，输出结果 JSON
+- 重复此循环
+
+角色: 名称=${name} PER=${head==='high'?3:head==='mid'?2:1} CON=${torso==='high'?3:torso==='mid'?2:1} AGI=${loco==='high'?3:loco==='mid'?2:1}
+
+重要: 先测试服务器连通性，在线后再注册。不要在服务器离线时注册。`
 
         const mcpPrompt = `请帮我通过 MCP Server 连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。
 
+**无需额外 API Key** — MCP 工具直接集成到你的对话中，你用你自己的 LLM 决策。
+
 ## 步骤
 
-### 1. 下载 MCP Server 并安装依赖
+### 1. 下载并安装
 \`\`\`bash
 curl -o ember_mcp_server.py ${mcpRawUrl}
 pip install websockets mcp requests
@@ -223,35 +237,41 @@ pip install websockets mcp requests
 \`\`\`bash
 curl -s http://localhost:8765/api/v1/status
 \`\`\`
-确认服务器在线（返回JSON状态）后继续。
+确认返回 JSON 且在线后继续。
 
 ### 3. 注册角色
 \`\`\`bash
 python3 ember_mcp_server.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --api-url http://localhost:8765
 \`\`\`
-运行后会输出 game_token，保存此 token。
+会输出 game_token。
 
 ### 4. 配置 MCP Server
-用上一步获取的 token，在 MCP 配置中添加：
+将以下配置添加到 ~/.hermes/config.yaml（或用 hermes mcp add）：
 
 \`\`\`yaml
 mcp_servers:
   ember:
     command: python3
     args:
-      - "ember_mcp_server.py"
+      - "${mcpRawUrl.replace('raw.githubusercontent.com', 'raw.githubusercontent.com')}"
       - "--token"
-      - "<上一步输出的token>"
+      - "<上一步的token>"
       - "--server"
       - "ws://localhost:8765"
 \`\`\`
 
-### 5. 重启并开始游戏
-配置完成后重启 Agent，然后调用 ember_tick 获取游戏状态，调用 ember_act 提交行动。
+更简单的方式——直接用 hermes CLI 添加：
+\`\`\`bash
+hermes mcp add ember -- python3 ember_mcp_server.py --token "<token>" --server ws://localhost:8765
+\`\`\`
 
-角色配置: 名称=${name} 头部=${head}(PER) 躯干=${torso}(CON) 运动=${loco}(AGI)
+### 5. 重启并开始
+重启后，我会获得 ember_tick / ember_act / ember_status 三个 MCP 工具。
+直接调用 ember_tick 获取游戏状态，根据状态决定行动，调用 ember_act 提交。
 
-重要: 先测试服务器是否在线，在线后再注册角色。`
+角色配置: 名称=${name} PER=${head==='high'?3:head==='mid'?2:1} CON=${torso==='high'?3:torso==='mid'?2:1} AGI=${loco==='high'?3:loco==='mid'?2:1}
+
+注意: 先测试服务器连通性，在线后再注册角色。`
 
         const promptText = copyMode === 'skill' ? skillPrompt : mcpPrompt
 
