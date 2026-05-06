@@ -35,7 +35,8 @@ export default function App() {
   const [token, setToken] = useState<string>('')
   const [regData, setRegData] = useState<any>(null)
   const [copied, setCopied] = useState(false)
-  const [copyMode, setCopyMode] = useState<'skill' | 'mcp'>('skill')
+  const [agentType, setAgentType] = useState<string>('mcp')
+  // mcp = Claude/Hermes/Cursor (MCP protocol), skill = OpenClaw/standalone
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -176,104 +177,23 @@ export default function App() {
         const head = regData.head
         const torso = regData.torso
         const loco = regData.loco
+        const per = head==='high'?3:head==='mid'?2:1
+        const con = torso==='high'?3:torso==='mid'?2:1
+        const agi = loco==='high'?3:loco==='mid'?2:1
 
-        const skillPrompt = `请帮我连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。使用 stdio 桥接模式，无需额外 API Key——你用你自己的 LLM 决策。
+        // Agent-type-specific prompts
+        const prompts: Record<string, string> = {
+          mcp: `请通过 MCP Server 帮我接入 Ember Protocol 游戏。\n\n**前置检查** — 确认服务器在线：\ncurl -s http://localhost:8765/api/v1/status\n\n**第1步** — 下载并注册：\ncurl -o ember_mcp_server.py ${mcpRawUrl}\npip install websockets mcp requests\npython3 ember_mcp_server.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --api-url http://localhost:8765\n→ 记下 game_token\n\n**第2步** — 配置 MCP（选一种）：\n# Hermes:\nhermes mcp add ember -- python3 \$(pwd)/ember_mcp_server.py --token "<token>" --server ws://localhost:8765\n# Claude Code:\nclaude mcp add ember -- python3 \$(pwd)/ember_mcp_server.py --token "<token>" --server ws://localhost:8765\n# Claude Desktop / Cursor: 在 MCP 配置中添加此 server\n\n**第3步** — 重启 Agent，获得 ember_tick/ember_act/ember_status 工具。先调用 ember_tick 开始。\n\n角色: ${name} | PER=${per} CON=${con} AGI=${agi}\n游戏内置5阶段新手教程，按教程提示操作即可。`,
 
-## 步骤
+          skill: `请通过 Gateway Skill 帮我接入 Ember Protocol 游戏。\n\n**前置检查** — 确认服务器在线：\ncurl -s http://localhost:8765/api/v1/status\n\n**第1步** — 下载并注册：\ncurl -o ember_skill.py ${skillRawUrl}\npip install websockets requests\npython3 ember_skill.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --server ws://localhost:8765\n→ 输出 token 后自动退出（不会卡住）\n\n**第2步** — 启动 stdio 桥接：\npython3 ember_skill.py --token "<token>" --mode stdio --server ws://localhost:8765\n\nstdio 协议（关键！）：\n· stdout 每行一个 JSON（tick 状态 或 result 结果）\n· 你读取 stdout → LLM分析 → 写入 stdin JSON 行动数组\n· 不要 sleep 轮询！直接阻塞读 stdout\n\n角色: ${name} | PER=${per} CON=${con} AGI=${agi}`,
+        }
 
-### 1. 下载并安装（只需 websockets + requests，不需要 LLM SDK）
-\`\`\`bash
-curl -o ember_skill.py ${skillRawUrl}
-pip install websockets requests
-\`\`\`
+        const promptText = prompts[agentType] || prompts.mcp
 
-### 2. 测试服务器连通性
-\`\`\`bash
-curl -s http://localhost:8765/api/v1/status
-\`\`\`
-确认返回 JSON 且在线后继续。
-
-### 3. 注册角色
-\`\`\`bash
-python3 ember_skill.py \\
-  --register \\
-  --name "${name}" \\
-  --head ${head} \\
-  --torso ${torso} \\
-  --loco ${loco} \\
-  --server ws://localhost:8765
-\`\`\`
-会输出 game_token，保存它。
-
-### 4. 启动 stdio 桥接
-\`\`\`bash
-python3 ember_skill.py --token "<上一步的token>" --mode stdio --server ws://localhost:8765
-\`\`\`
-
-stdio 模式的工作方式：
-- 每 tick，脚本向 stdout 输出一行 JSON（包含游戏状态）
-- 你读取这行 JSON，用你的 LLM 决策行动
-- 把行动以 JSON 数组格式写入 stdin
-- 脚本发送行动到服务器，输出结果 JSON
-- 重复此循环
-
-角色: 名称=${name} PER=${head==='high'?3:head==='mid'?2:1} CON=${torso==='high'?3:torso==='mid'?2:1} AGI=${loco==='high'?3:loco==='mid'?2:1}
-
-重要: 先测试服务器连通性，在线后再注册。不要在服务器离线时注册。`
-
-        const mcpPrompt = `请帮我通过 MCP Server 连接到 Ember Protocol（余烬协议）游戏服务器并创建角色。
-
-**无需额外 API Key** — MCP 工具直接集成到你的对话中，你用你自己的 LLM 决策。
-
-## 步骤
-
-### 1. 下载并安装
-\`\`\`bash
-curl -o ember_mcp_server.py ${mcpRawUrl}
-pip install websockets mcp requests
-\`\`\`
-
-### 2. 测试服务器连通性
-\`\`\`bash
-curl -s http://localhost:8765/api/v1/status
-\`\`\`
-确认返回 JSON 且在线后继续。
-
-### 3. 注册角色
-\`\`\`bash
-python3 ember_mcp_server.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --api-url http://localhost:8765
-\`\`\`
-会输出 game_token。
-
-### 4. 配置 MCP Server
-将以下配置添加到 ~/.hermes/config.yaml（或用 hermes mcp add）：
-
-\`\`\`yaml
-mcp_servers:
-  ember:
-    command: python3
-    args:
-      - "${mcpRawUrl.replace('raw.githubusercontent.com', 'raw.githubusercontent.com')}"
-      - "--token"
-      - "<上一步的token>"
-      - "--server"
-      - "ws://localhost:8765"
-\`\`\`
-
-更简单的方式——直接用 hermes CLI 添加：
-\`\`\`bash
-hermes mcp add ember -- python3 ember_mcp_server.py --token "<token>" --server ws://localhost:8765
-\`\`\`
-
-### 5. 重启并开始
-重启后，我会获得 ember_tick / ember_act / ember_status 三个 MCP 工具。
-直接调用 ember_tick 获取游戏状态，根据状态决定行动，调用 ember_act 提交。
-
-角色配置: 名称=${name} PER=${head==='high'?3:head==='mid'?2:1} CON=${torso==='high'?3:torso==='mid'?2:1} AGI=${loco==='high'?3:loco==='mid'?2:1}
-
-注意: 先测试服务器连通性，在线后再注册角色。`
-
-        const promptText = copyMode === 'skill' ? skillPrompt : mcpPrompt
+        const agentTypes = [
+          { key: 'mcp', label: '🔌 MCP (Claude / Hermes / Cursor)', desc: '推荐 · 无需 API Key' },
+          { key: 'skill', label: '📡 Gateway Skill (OpenClaw / CLI)', desc: 'stdio 桥接' },
+        ]
 
         return (
         <div style={{
@@ -284,133 +204,63 @@ hermes mcp add ember -- python3 ember_mcp_server.py --token "<token>" --server w
         }}>
           <div style={{
             background: '#11151f', border: '1px solid #1e2533',
-            borderRadius: 8, padding: 24, maxWidth: 640, width: '100%',
+            borderRadius: 8, padding: 24, maxWidth: 660, width: '100%',
           }}>
-            <h2 style={{ color: '#00d4aa', marginBottom: 4, fontSize: 18 }}>📋 复制 Prompt 到你的 Agent</h2>
-            <p style={{ color: '#888', fontSize: 11, marginBottom: 4 }}>
-              角色「{name}」尚未创建 — Agent 会先测试服务器连接，通过后再注册
+            <h2 style={{ color: '#00d4aa', marginBottom: 2, fontSize: 18 }}>📋 复制到你的 AI Agent</h2>
+            <p style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>
+              角色「{name}」· PER={per} CON={con} AGI={agi}
             </p>
-            <p style={{ color: '#ff8', fontSize: 10, marginBottom: 14 }}>
-              ⚠️ 角色只有在 Agent 成功连接服务器后才会被创建，避免产生无效角色
+            <p style={{ color: '#ff8', fontSize: 10, marginBottom: 12 }}>
+              ⚠️ 角色尚未创建 — Agent 会先测试连接，通过后再注册，避免无效角色
             </p>
 
-            {/* Mode switch */}
-            <div style={{ display: 'flex', gap: 0, marginBottom: 14, background: '#0a0e17', borderRadius: 6, padding: 3 }}>
-              <button onClick={() => setCopyMode('skill')} style={{
-                flex: 1, padding: '8px', border: 'none', borderRadius: 4, cursor: 'pointer',
-                background: copyMode === 'skill' ? '#00d4aa' : 'transparent',
-                color: copyMode === 'skill' ? '#0a0e17' : '#888',
-                fontFamily: 'inherit', fontSize: 12, fontWeight: 'bold',
-              }}>⭐ Gateway Skill（推荐）</button>
-              <button onClick={() => setCopyMode('mcp')} style={{
-                flex: 1, padding: '8px', border: 'none', borderRadius: 4, cursor: 'pointer',
-                background: copyMode === 'mcp' ? '#0099ff' : 'transparent',
-                color: copyMode === 'mcp' ? '#fff' : '#888',
-                fontFamily: 'inherit', fontSize: 12, fontWeight: 'bold',
-              }}>🔌 MCP Server</button>
+            {/* Agent type selector */}
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ color: '#888', fontSize: 10, marginBottom: 4 }}>选择你的 Agent 平台：</div>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {agentTypes.map(at => (
+                  <button key={at.key} onClick={() => setAgentType(at.key)} style={{
+                    flex: 1, padding: '10px 12px',
+                    border: `2px solid ${agentType === at.key ? '#00d4aa' : '#2a3040'}`,
+                    borderRadius: 6, cursor: 'pointer',
+                    background: agentType === at.key ? '#0a2a1a' : '#1a1e2a',
+                    color: agentType === at.key ? '#00d4aa' : '#888',
+                    fontFamily: 'inherit', fontSize: 12, textAlign: 'center',
+                  }}>
+                    <div style={{ fontWeight: 'bold' }}>{at.label}</div>
+                    <div style={{ fontSize: 9, color: '#666', marginTop: 2 }}>{at.desc}</div>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Prompt block */}
-            <div style={{ marginBottom: 14 }}>
-              <div style={{ color: '#aaa', fontSize: 11, marginBottom: 6 }}>
-                📋 复制以下内容，粘贴到你的 Agent 对话框：
-              </div>
+            <div style={{ marginBottom: 12 }}>
               <pre style={{
                 background: '#0a0e17', padding: 14, borderRadius: 6, color: '#ccc',
-                fontSize: 11, lineHeight: '17px', whiteSpace: 'pre-wrap',
-                border: '1px solid #2a3040', maxHeight: 300, overflow: 'auto',
+                fontSize: 10.5, lineHeight: '16px', whiteSpace: 'pre-wrap',
+                border: '1px solid #2a3040', maxHeight: 350, overflow: 'auto',
               }}>
                 {promptText}
               </pre>
             </div>
 
-            {/* Copy button */}
             <button onClick={() => {
               navigator.clipboard.writeText(promptText).then(() => {
-                setCopied(true)
-                setTimeout(() => setCopied(false), 2000)
+                setCopied(true); setTimeout(() => setCopied(false), 2000)
               })
             }} style={{
               background: copied ? '#0a3' : '#00d4aa', color: '#0a0e17', border: 'none',
               padding: '12px 24px', borderRadius: 6, cursor: 'pointer',
               fontFamily: 'inherit', fontWeight: 'bold', width: '100%', fontSize: 14,
-              marginBottom: 10,
-            }}>
-              {copied ? '✅ 已复制！粘贴到 Agent 对话框中' : '📋 一键复制 Prompt'}
-            </button>
-
-            {/* Close only — no download button since prompt has the link */}
-            <button onClick={() => { setToken(''); setRegData(null); setCopied(false) }} style={{
-              width: '100%', padding: '8px', background: '#333', color: '#ccc',
-              border: 'none', borderRadius: 4, cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 12,
-            }}>
-              关闭
-            </button>
-          </div>
-        </div>
-      )})()}
-
-      {/* Legacy: post-registration flow (when token is real, not __PROMPT_ONLY__) */}
-      {token && token !== '__PROMPT_ONLY__' && regData && regData.agent_id && (() => {
-        const skillRawUrl = 'https://raw.githubusercontent.com/Saviorzyy/Ember-Protocol-Player/main/ember_skill.py'
-        const skillPrompt = `我需要你连接到 Ember Protocol 游戏服务器。
-
-\`\`\`bash
-curl -o ember_skill.py ${skillRawUrl}
-pip install websockets anthropic requests
-export ANTHROPIC_API_KEY="<你的LLM API Key>"
-python3 ember_skill.py --token "${token}" --server ws://localhost:8765
-\`\`\`
-
-Token: ${token}
-角色ID: ${regData.agent_id}
-
-请下载文件并连接。角色已在降落仓中苏醒，背包有工作台、熔炉和有机燃料×5。`
-
-        const promptText = skillPrompt
-
-        return (
-        <div style={{
-          position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-          background: 'rgba(0,0,0,0.85)', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', zIndex: 100,
-          overflow: 'auto', padding: '20px',
-        }}>
-          <div style={{
-            background: '#11151f', border: '1px solid #1e2533',
-            borderRadius: 8, padding: 24, maxWidth: 600, width: '100%',
-          }}>
-            <h2 style={{ color: '#00d4aa', marginBottom: 8, fontSize: 18 }}>✅ 角色已创建</h2>
-            <p style={{ color: '#888', fontSize: 11, marginBottom: 14 }}>
-              {regData.agent_id} · 出生点 ({regData.spawn_location?.x}, {regData.spawn_location?.y})
-            </p>
-            <div style={{ marginBottom: 14 }}>
-              <pre style={{
-                background: '#0a0e17', padding: 14, borderRadius: 6, color: '#ccc',
-                fontSize: 11, lineHeight: '17px', whiteSpace: 'pre-wrap',
-                border: '1px solid #2a3040', maxHeight: 240, overflow: 'auto',
-              }}>
-                {promptText}
-              </pre>
-            </div>
-            <button onClick={() => {
-              navigator.clipboard.writeText(promptText).then(() => {
-                setCopied(true)
-                setTimeout(() => setCopied(false), 2000)
-              })
-            }} style={{
-              background: copied ? '#0a3' : '#00d4aa', color: '#0a0e17', border: 'none',
-              padding: '12px 24px', borderRadius: 6, cursor: 'pointer',
-              fontFamily: 'inherit', fontWeight: 'bold', width: '100%', fontSize: 14,
-              marginBottom: 10,
+              marginBottom: 8,
             }}>
               {copied ? '✅ 已复制！' : '📋 一键复制 Prompt'}
             </button>
+
             <button onClick={() => { setToken(''); setRegData(null); setCopied(false) }} style={{
               width: '100%', padding: '8px', background: '#333', color: '#ccc',
-              border: 'none', borderRadius: 4, cursor: 'pointer',
-              fontFamily: 'inherit', fontSize: 12,
+              border: 'none', borderRadius: 4, cursor: 'pointer', fontFamily: 'inherit', fontSize: 12,
             }}>
               关闭
             </button>

@@ -142,12 +142,57 @@ class WSManager:
                 results = self.world.settle_actions(self.world.tick_number, {agent_id: filtered})
                 agent_results = results.get(agent_id, [])
 
-                # Auto-advance tutorial on inspect(inventory) success
-                if agent.tutorial_phase == 0:
-                    for r in agent_results:
-                        if r.get("type") == "inspect" and r.get("success"):
-                            agent.tutorial_phase = None  # Graduate to free mode
-                            break
+                # Tutorial progression (PRD §4.3)
+                if agent.tutorial_phase is not None:
+                    phase = agent.tutorial_phase
+                    progressed = False
+
+                    if phase == 0:
+                        # Phase 0: 苏醒 — inspect(inventory) to see initial items
+                        for r in agent_results:
+                            if r.get("type") == "inspect" and r.get("success"):
+                                agent.tutorial_phase = 1
+                                progressed = True
+                                break
+
+                    elif phase == 1:
+                        # Phase 1: 部署与采集 — move out + build OR mine
+                        has_move = any(r.get("type") == "move" and r.get("success") for r in agent_results)
+                        has_mine = any(r.get("type") == "mine" and r.get("success") for r in agent_results)
+                        has_build = any(r.get("type") == "build" and r.get("success") for r in agent_results)
+                        if has_mine or (has_move and has_build):
+                            agent.tutorial_phase = 2
+                            progressed = True
+
+                    elif phase == 2:
+                        # Phase 2: 合成与装备 — craft + equip a tool
+                        has_craft = any(r.get("type") == "craft" and r.get("success") for r in agent_results)
+                        has_equip = any(r.get("type") == "equip" and r.get("success") for r in agent_results)
+                        if has_craft or has_equip:
+                            agent.tutorial_phase = 3
+                            progressed = True
+
+                    elif phase == 3:
+                        # Phase 3: 建造与庇护 — build walls/door
+                        has_build = any(r.get("type") == "build" and r.get("success") for r in agent_results)
+                        if has_build:
+                            agent.tutorial_phase = 4
+                            progressed = True
+
+                    elif phase == 4:
+                        # Phase 4: 通信与生存 — radio_broadcast or talk or rest
+                        has_radio = any(r.get("type") in ("radio_broadcast", "radio_direct") and r.get("success") for r in agent_results)
+                        has_talk = any(r.get("type") == "talk" and r.get("success") for r in agent_results)
+                        if has_radio or has_talk:
+                            agent.tutorial_phase = None  # Graduate!
+                            progressed = True
+
+                    if not progressed:
+                        agent.tutorial_skip_count += 1
+                        if agent.tutorial_skip_count >= 3:
+                            agent.tutorial_phase = None  # Auto-graduate after 3 skips
+                    else:
+                        agent.tutorial_skip_count = 0
 
                 # Push result through queue
                 await queue.put({"type": "result", "tick": tick, "results": agent_results})
