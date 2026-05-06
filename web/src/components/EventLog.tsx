@@ -4,6 +4,10 @@ const EVENT_LABELS: Record<string, string> = {
   agent_created: '🟢 角色创建',
   agent_removed: '🔴 角色离线',
   agent_move: '🚶 移动',
+  agent_chop: '🪓 砍伐采集',
+  agent_mine: '⛏ 采矿',
+  agent_rest: '😴 休息恢复',
+  agent_scan: '📡 探测矿脉',
   agent_respawn: '🔄 重生',
   agent_death: '💀 死亡',
   agent_permanent_death: '☠️ 永久死亡',
@@ -14,6 +18,9 @@ const EVENT_LABELS: Record<string, string> = {
   day_phase: '🌅 昼夜切换',
   craft_complete: '🔧 合成完成',
 }
+
+const AGENT_EVENTS = new Set(['agent_move','agent_chop','agent_mine','agent_rest','agent_scan',
+  'agent_created','agent_respawn','agent_death','agent_permanent_death'])
 
 export default function EventLog() {
   const [actions, setActions] = useState<any[]>([])

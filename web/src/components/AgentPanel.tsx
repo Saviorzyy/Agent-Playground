@@ -35,6 +35,55 @@ const ITEM_NAMES: Record<string, string> = {
 
 interface AgentPanelProps { agent: Agent | null }
 
+const EVENT_LABELS: Record<string, string> = {
+  agent_move: '🚶', agent_chop: '🪓', agent_mine: '⛏', agent_rest: '😴', agent_scan: '📡',
+  agent_created: '🟢', agent_respawn: '🔄', agent_death: '💀',
+  structure_built: '🏗', structure_destroyed: '💥', craft_complete: '🔧',
+}
+
+function AgentActionLog({ agentId }: { agentId: string }) {
+  const [actions, setActions] = useState<any[]>([])
+  useEffect(() => {
+    const fetchActions = () => {
+      fetch('/api/v1/actions?count=40')
+        .then(r => r.json())
+        .then(data => {
+          const filtered = (data.actions || []).filter((a: any) => a.agent_id === agentId)
+          setActions(filtered.slice(-12))
+        })
+        .catch(() => {})
+    }
+    fetchActions()
+    const interval = setInterval(fetchActions, 3000)
+    return () => clearInterval(interval)
+  }, [agentId])
+
+  if (actions.length === 0) return null
+  return (
+    <div style={{ marginTop: 10 }}>
+      <div style={{ color: '#0099ff', fontSize: 12, marginBottom: 6, borderBottom: '1px solid #1e2533', paddingBottom: 4 }}>
+        📜 行为日志
+      </div>
+      <div style={{ maxHeight: 160, overflow: 'auto' }}>
+        {actions.slice().reverse().map((evt, i) => (
+          <div key={i} style={{ padding: '2px 0', fontSize: 10, color: '#aaa', borderBottom: '1px solid #1a1e2a' }}>
+            <span style={{ color: '#555' }}>T{evt.tick}</span>
+            <span style={{ margin: '0 4px' }}>{EVENT_LABELS[evt.type] || '·'}</span>
+            {evt.type === 'agent_move' && <span>移动到 {JSON.stringify(evt.to)}</span>}
+            {evt.type === 'agent_chop' && <span>采集 {(evt.resource||'植被')} +{evt.yield||1}</span>}
+            {evt.type === 'agent_mine' && <span>采矿 {evt.ore ? evt.ore + '+' : ''}石料 剩余{evt.stone_remaining}</span>}
+            {evt.type === 'agent_rest' && <span>恢复能量 → {evt.energy}</span>}
+            {evt.type === 'agent_scan' && <span>发现 {evt.found||0} 处矿脉</span>}
+            {evt.type === 'agent_created' && <span>角色创建</span>}
+            {evt.type === 'structure_built' && <span>建造完成</span>}
+            {evt.type === 'craft_complete' && <span>合成完成</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 export default function AgentPanel({ agent }: AgentPanelProps) {
   const [detail, setDetail] = useState<AgentDetail | null>(null)
 
@@ -143,6 +192,9 @@ export default function AgentPanel({ agent }: AgentPanelProps) {
             )}
           </div>
         )}
+
+        {/* Per-agent action log */}
+        {d && <AgentActionLog agentId={d.agent_id} />}
 
         {/* Energy explanation */}
         <div style={{ marginTop: 10, padding: 6, background: '#1a1e2a', borderRadius: 4, fontSize: 9, color: '#666', lineHeight: '14px' }}>

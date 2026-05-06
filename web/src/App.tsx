@@ -89,6 +89,7 @@ export default function App() {
     const interval = setInterval(() => {
       fetchStatus()
       fetchAgents()
+      fetchMap()
       fetchEvents()
     }, 3000)
     return () => clearInterval(interval)

@@ -662,6 +662,9 @@ class World:
         if held_tool:
             self._reduce_durability(agent, held_tool)
 
+        self._log_event("agent_mine", {"agent_id": agent.agent_id, "position": [tx, ty],
+                        "stone_remaining": tile.stone_amount, "ore": ore_result})
+
         return {"type": "mine", "success": True, "detail": result_detail,
                 "ore_found": ore_result, "stone_remaining": tile.stone_amount}
 
@@ -691,6 +694,7 @@ class World:
             tile.veg_yield = 0
             agent.energy -= ENERGY_CHOP
             self.add_item(agent, "wood", wood_yield)
+            self._log_event("agent_chop", {"agent_id": agent.agent_id, "position": [tx, ty], "resource": veg, "yield": wood_yield})
 
             if held:
                 self._reduce_durability(agent, held)
@@ -700,6 +704,7 @@ class World:
             tile.veg_yield = 0
             agent.energy -= ENERGY_CHOP
             self.add_item(agent, "stone", 1)
+            self._log_event("agent_chop", {"agent_id": agent.agent_id, "position": [tx, ty], "resource": "rubble", "yield": 1})
             return {"type": "chop", "success": True, "detail": "清理碎石，获得石料×1"}
 
         return {"type": "chop", "success": False, "error_code": "INVALID_TARGET", "detail": "该格无可采集植被"}
@@ -732,6 +737,7 @@ class World:
 
     def _do_rest(self, agent: AgentState, action: dict) -> dict:
         agent.energy = min(agent.max_energy, agent.energy + ENERGY_RECOVER_REST)
+        self._log_event("agent_rest", {"agent_id": agent.agent_id, "energy": agent.energy})
         return {"type": "rest", "success": True, "detail": f"休息，恢复+{ENERGY_RECOVER_REST}能量"}
 
     def _do_scan(self, agent: AgentState, action: dict) -> dict:
@@ -749,6 +755,7 @@ class World:
                 if tile and tile.l2_type == 'stone' and tile.ore_type and not tile.ore_exposed:
                     tile.ore_exposed = True
                     found.append({"x": x, "y": y, "ore": tile.ore_type})
+        self._log_event("agent_scan", {"agent_id": agent.agent_id, "found": len(found)})
         return {"type": "scan", "success": True, "detail": f"探测完成，发现 {len(found)} 处隐藏矿脉", "found": found}
 
     def _do_talk(self, agent: AgentState, action: dict) -> dict:

@@ -182,7 +182,8 @@ async def handle_actions_log(request: web.Request) -> web.Response:
     # Get recent events that are agent actions
     action_events = []
     for evt in world.event_log[-count*3:]:  # Search through more events
-        if evt.get("type") in ("agent_move", "agent_created", "agent_respawn",
+        if evt.get("type") in ("agent_move", "agent_chop", "agent_mine", "agent_rest",
+                                "agent_scan", "agent_created", "agent_respawn",
                                 "agent_death", "agent_permanent_death",
                                 "structure_built", "structure_destroyed",
                                 "craft_complete", "weather_change", "day_phase"):
