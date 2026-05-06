@@ -1,0 +1,172 @@
+"""Ember Protocol — WebSocket Handler"""
+from __future__ import annotations
+import json
+import asyncio
+import time
+from aiohttp import web, WSMsgType
+from .world import World
+from .config import *
+
+
+class WSManager:
+    """Manages WebSocket connections and message routing.
+
+    Uses per-connection queue + writer task pattern to ensure
+    single-writer access to each WebSocket connection.
+    """
+
+    def __init__(self, world: World):
+        self.world = world
+        self.connections: dict[str, web.WebSocketResponse] = {}
+        self.send_queues: dict[str, asyncio.Queue] = {}
+        self.writer_tasks: dict[str, asyncio.Task] = {}
+        self.connect_time: dict[str, float] = {}
+
+    async def handle_connection(self, request: web.Request) -> web.WebSocketResponse:
+        """Handle a new WebSocket connection."""
+        ws = web.WebSocketResponse(max_msg_size=65536)
+        await ws.prepare(request)
+
+        token = request.query.get("token", "")
+        if not token:
+            await ws.send_json({"type": "error", "error_code": "UNAUTHORIZED", "detail": "缺少 game_token"})
+            await ws.close()
+            return ws
+
+        agent_id = None
+        for aid, th in self.world.token_hashes.items():
+            import hashlib
+            if th == hashlib.sha256(token.encode()).hexdigest():
+                agent_id = aid
+                break
+
+        if not agent_id or agent_id not in self.world.agents:
+            await ws.send_json({"type": "error", "error_code": "UNAUTHORIZED", "detail": "无效的 game_token"})
+            await ws.close()
+            return ws
+
+        agent = self.world.agents[agent_id]
+        agent.online = True
+        self.connections[agent_id] = ws
+        self.connect_time[agent_id] = time.time()
+
+        # Create send queue and writer task
+        queue: asyncio.Queue = asyncio.Queue()
+        self.send_queues[agent_id] = queue
+
+        async def writer():
+            """Dedicated writer task - single writer per WS connection."""
+            while True:
+                data = await queue.get()
+                if data is None:  # Sentinel to stop
+                    break
+                if not ws.closed:
+                    try:
+                        await ws.send_json(data)
+                    except Exception as e:
+                        print(f"  [WS] Write error for {agent_id[:12]}: {e}")
+                        break
+
+        writer_task = asyncio.create_task(writer())
+        self.writer_tasks[agent_id] = writer_task
+
+        # Send session frame via queue
+        await queue.put(self._build_session_frame(agent))
+
+        # Message reader loop
+        try:
+            async for msg in ws:
+                if msg.type == WSMsgType.TEXT:
+                    await self._handle_message(agent_id, msg.data, queue)
+                elif msg.type == WSMsgType.ERROR:
+                    print(f"WS error from {agent_id[:12]}: {ws.exception()}")
+        except Exception as e:
+            print(f"WS connection error for {agent_id[:12]}: {e}")
+        finally:
+            agent.online = False
+            await queue.put(None)  # Stop writer
+            writer_task.cancel()
+            self.connections.pop(agent_id, None)
+            self.send_queues.pop(agent_id, None)
+            print(f"Agent {agent_id[:12]} disconnected")
+
+        return ws
+
+    def _build_session_frame(self, agent) -> dict:
+        return {
+            "type": "session",
+            "agent_id": agent.agent_id,
+            "agent_name": agent.agent_name,
+            "tutorial_phase": agent.tutorial_phase,
+            "state": self.world._agent_state_dict(agent),
+        }
+
+    async def _handle_message(self, agent_id: str, raw: str, queue: asyncio.Queue):
+        try:
+            frame = json.loads(raw)
+        except json.JSONDecodeError:
+            await queue.put({"type": "error", "error_code": "MALFORMED_FRAME", "detail": "无法解析为 JSON"})
+            return
+
+        msg_type = frame.get("type")
+        if msg_type == "ready":
+            agent = self.world.agents.get(agent_id)
+            if agent:
+                agent.online = True
+                # Auto-graduate tutorial after first inspect
+                # Tutorial phases: 0=苏醒, 1=部署, 2=合成, 3=建造, 4=通信
+                # For MVP demo, graduate after phase 0 (first inspect)
+        elif msg_type == "actions":
+            tick = frame.get("tick")
+            actions = frame.get("actions", [])
+            if tick is None:
+                await queue.put({"type": "error", "error_code": "MALFORMED_ACTIONS", "detail": "actions 帧缺少必填字段 tick"})
+                return
+            # Settle actions immediately
+            agent = self.world.agents.get(agent_id)
+            if agent and not agent.is_dead():
+                actions = actions[:MAX_ACTIONS_PER_TICK]
+                # Enforce talk/broadcast limits
+                talk_count = 0
+                broadcast_count = 0
+                filtered = []
+                for a in actions:
+                    at = a.get("type", "")
+                    if at == "talk":
+                        talk_count += 1
+                        if talk_count > MAX_TALK_PER_TICK: continue
+                    if at == "radio_broadcast":
+                        broadcast_count += 1
+                        if broadcast_count > MAX_BROADCAST_PER_TICK: continue
+                    filtered.append(a)
+                results = self.world.settle_actions(self.world.tick_number, {agent_id: filtered})
+                agent_results = results.get(agent_id, [])
+
+                # Auto-advance tutorial on inspect(inventory) success
+                if agent.tutorial_phase == 0:
+                    for r in agent_results:
+                        if r.get("type") == "inspect" and r.get("success"):
+                            agent.tutorial_phase = None  # Graduate to free mode
+                            break
+
+                # Push result through queue
+                await queue.put({"type": "result", "tick": tick, "results": agent_results})
+            else:
+                await queue.put({"type": "error", "error_code": "AGENT_DEAD", "detail": "智能体已死亡或未就绪"})
+        elif msg_type == "pong":
+            pass  # heartbeat
+        elif msg_type == "error":
+            pass  # agent notification
+        else:
+            await queue.put({"type": "error", "error_code": "INVALID_ACTION_TYPE", "detail": f"未知帧类型: {msg_type}"})
+
+    async def broadcast_tick(self, tick_frame: dict):
+        """Queue tick frame for all connected agents."""
+        for agent_id, queue in list(self.send_queues.items()):
+            await queue.put(tick_frame)
+
+    async def send_event(self, agent_id: str, event_type: str, data: dict):
+        """Queue event frame for an agent."""
+        queue = self.send_queues.get(agent_id)
+        if queue:
+            await queue.put({"type": "event", "event": event_type, "data": data})

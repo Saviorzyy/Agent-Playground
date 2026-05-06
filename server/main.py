@@ -1,0 +1,367 @@
+"""Ember Protocol — Game Server Main Entry Point"""
+from __future__ import annotations
+import asyncio
+import json
+import os
+import time
+import sys
+from aiohttp import web
+import aiohttp_cors
+
+from .world import World
+from .ws_handler import WSManager
+from .http_routes import handle_register, handle_status, handle_map_data, handle_agents_list, handle_agent_detail, handle_actions_log, handle_events
+from .db import init_db, save_snapshot
+from .config import MAP_SEED, TICK_INTERVAL, TICK_CADENCE, HEARTBEAT_INTERVAL, HEARTBEAT_MAX_MISS
+
+
+class GameServer:
+    """Main game server orchestrating tick loop, WebSocket, and HTTP."""
+
+    def __init__(self, data_dir: str = "data", seed: int = MAP_SEED):
+        self.data_dir = data_dir
+        self.world = World(seed=seed)
+        self.ws_manager = WSManager(self.world)
+        self._running = False
+        self._tick = 0
+
+        os.makedirs(data_dir, exist_ok=True)
+        db_path = os.path.join(data_dir, "ember.db")
+        init_db(db_path)
+
+        # Register token hashes from DB
+        for agent_id in list(self.world.agents.keys()):
+            # Load from DB
+            pass
+
+    async def start(self, host: str = "0.0.0.0", port: int = 8765):
+        """Start the game server."""
+        app = web.Application()
+        app["world"] = self.world
+
+        # CORS
+        cors = aiohttp_cors.setup(app, defaults={
+            "*": aiohttp_cors.ResourceOptions(
+                allow_credentials=True, expose_headers="*", allow_headers="*",
+            )
+        })
+
+        # HTTP routes
+        app.router.add_post("/api/v1/auth/register", handle_register)
+        app.router.add_get("/api/v1/status", handle_status)
+        app.router.add_get("/api/v1/map", handle_map_data)
+        app.router.add_get("/api/v1/agents", handle_agents_list)
+        app.router.add_get("/api/v1/agents/{agent_id}", handle_agent_detail)
+        app.router.add_get("/api/v1/actions", handle_actions_log)
+        app.router.add_get("/api/v1/events", handle_events)
+
+        # WebSocket route
+        app.router.add_get("/ws/game", self.ws_manager.handle_connection)
+
+        # CORS on all routes
+        for route in list(app.router.routes()):
+            cors.add(route)
+
+        self._running = True
+
+        # Start tick loop in background
+        asyncio.create_task(self._tick_loop())
+        # Heartbeat loop
+        asyncio.create_task(self._heartbeat_loop())
+        # Snapshot loop
+        asyncio.create_task(self._snapshot_loop())
+
+        print(f"🔥 余烬协议 (Ember Protocol) — Game Server")
+        print(f"   Map: 200×200 | Seed: {MAP_SEED}")
+        print(f"   HTTP: http://{host}:{port}")
+        print(f"   WS: ws://{host}:{port}/ws/game")
+        print(f"   Tick: {TICK_INTERVAL}s")
+
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(runner, host, port)
+        await site.start()
+
+        # Keep running
+        while self._running:
+            await asyncio.sleep(1)
+
+    async def _tick_loop(self):
+        """Main tick loop."""
+        while self._running:
+            tick_start = time.monotonic()
+
+            # Start tick
+            self.world.start_tick(self._tick)
+
+            # Build and broadcast per-agent tick frames
+            for agent_id, ws_conn in list(self.ws_manager.connections.items()):
+                tick_frame = self.build_tick_for_agent(agent_id)
+                queue = self.ws_manager.send_queues.get(agent_id)
+                if queue:
+                    await queue.put(tick_frame)
+
+            # Wait for collection window
+            await asyncio.sleep(TICK_INTERVAL)
+
+            # Actions are now settled immediately in ws_handler
+            # Just advance the world state
+            self.world.advance_world()
+
+            # Maintain cadence
+            elapsed = time.monotonic() - tick_start
+            remaining = TICK_CADENCE - elapsed
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+
+            self._tick += 1
+
+    def _build_tick_frame(self) -> dict:
+        """Build a tick frame with full game state (PRD section 6.4.2)."""
+        cycle_tick = self._tick % 900
+        day_phase = self.world.day_phase.value
+        if day_phase == "day":
+            time_info = f"白天 距夜晚还有{420 - cycle_tick} tick"
+        elif day_phase == "dusk":
+            time_info = "黄昏"
+        elif day_phase == "night":
+            time_info = f"夜晚 距黎明还有{870 - cycle_tick} tick"
+        else:
+            time_info = "黎明"
+
+        weather_info = "正常"
+        if self.world.weather.value == "radiation_storm":
+            weather_info = f"辐射风暴 (剩余{self.world.weather_remaining} tick)"
+
+        system_msg = f"[余烬协议] 游戏状态 — Tick {self._tick} | {time_info} | {weather_info}"
+
+        # Build per-agent user messages (done in broadcast)
+        return {
+            "type": "tick",
+            "tick": self._tick,
+            "messages": [
+                {"role": "system", "content": system_msg},
+            ]
+        }
+
+    def build_tick_for_agent(self, agent_id: str) -> dict:
+        """Build a tick frame with full game state for a specific agent."""
+        cycle_tick = self.world.tick_number % 900
+        day_phase = self.world.day_phase.value
+        if day_phase == "day":
+            time_info = f"白天 距夜晚还有{420 - cycle_tick} tick"
+        elif day_phase == "dusk":
+            time_info = "黄昏"
+        elif day_phase == "night":
+            time_info = f"夜晚 距黎明还有{870 - cycle_tick} tick"
+        else:
+            time_info = "黎明"
+
+        weather_info = "正常"
+        if self.world.weather.value == "radiation_storm":
+            weather_info = f"辐射风暴 (剩余{self.world.weather_remaining} tick)"
+
+        system_msg = f"[余烬协议] 游戏状态 — Tick {self.world.tick_number} | {time_info} | {weather_info}"
+        user_msg = self._build_user_message(agent_id)
+
+        return {
+            "type": "tick",
+            "tick": self.world.tick_number,
+            "messages": [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_msg},
+            ]
+        }
+
+    def _build_user_message(self, agent_id: str) -> str:
+        """Build the detailed game state user message for an agent."""
+        agent = self.world.agents.get(agent_id)
+        if not agent:
+            return "=== 游戏状态 ===\n智能体未找到。"
+
+        world = self.world
+        lines = ["=== 游戏状态 ===", ""]
+
+        # Agent state
+        pos = agent.position
+        held = agent.equipment.main_hand or "空手"
+        lines.append(f"【自身状态】位置:({pos.x},{pos.y}) HP:{agent.health}/{agent.max_health} 能量:{agent.energy} 手持:{held}")
+        lines.append(f"  PER:{agent.perception} CON:{agent.constitution} AGI:{agent.agility} | "
+                     f"视野:{agent.view_range(world.day_phase, world.weather)}格 移速:{agent.move_speed()}格/tick")
+        lines.append(f"  备份机体:{agent.backup_count}")
+
+        # Tutorial guidance
+        tp = agent.tutorial_phase
+        if tp == 0:
+            lines.append(f"\n📖 【教程 Phase 0: 苏醒】")
+            lines.append(f"  你在降落仓中苏醒。系统消息: 背包里有工作台和熔炉。")
+            lines.append(f"  引导行动: inspect(inventory) → 查看初始物资")
+        elif tp == 1:
+            lines.append(f"\n📖 【教程 Phase 1: 部署与采集】")
+            lines.append(f"  走出降落仓，部署工作台和熔炉。降落仓护盾内有应急电力。")
+            lines.append(f"  引导行动: 移动到平坦空地 → build(workbench) → build(furnace)")
+        elif tp == 2:
+            lines.append(f"\n📖 【教程 Phase 2: 合成与装备】")
+            lines.append(f"  在工作台旁合成一把基础采掘器，然后装备它。")
+            lines.append(f"  引导行动: craft(basic_excavator) → equip(basic_excavator)")
+        elif tp == 3:
+            lines.append(f"\n📖 【教程 Phase 3: 建造与庇护】")
+            lines.append(f"  辐射风暴即将来临！合成建材方块，围合一个封闭空间。")
+            lines.append(f"  引导行动: craft(building_block)×8 → build(wall×4) → build(door)")
+        elif tp == 4:
+            lines.append(f"\n📖 【教程 Phase 4: 通信与生存】")
+            lines.append(f"  附近可能有其他幸存者。尝试广播你的位置。")
+            lines.append(f"  引导行动: radio_broadcast / talk / rest")
+        elif tp is None:
+            lines.append(f"\n🎮 【自由模式】已毕业，自主探索生存")
+
+        # Vicinity
+        view_range = agent.view_range(world.day_phase, world.weather)
+        px, py = pos.x, pos.y
+        terrain_seen = []
+        structures_seen = []
+        agents_seen = []
+        ground_seen = []
+        ore_seen = []
+
+        for dy in range(-view_range, view_range + 1):
+            for dx in range(-view_range, view_range + 1):
+                x, y = px + dx, py + dy
+                if not world.in_bounds(x, y):
+                    continue
+                if abs(dx) + abs(dy) > view_range:
+                    continue
+                tile = world.get_tile(x, y)
+                if not tile:
+                    continue
+
+                # Terrain
+                tnames = {"flat": "平地", "sand": "沙地", "rock": "基岩", "water": "水域", "trench": "沟壑"}
+                if tile.l2_type == 'stone' and tile.stone_amount > 0:
+                    ore_label = ""
+                    if tile.ore_type and tile.ore_exposed:
+                        ore_names = {"copper": "铜", "iron": "铁", "uranium": "铀", "gold": "金"}
+                        ore_label = f"(含{ore_names.get(tile.ore_type, tile.ore_type)}矿脉)"
+                    terrain_seen.append(f"石料{ore_label}×{tile.stone_amount}({x},{y})")
+                elif tile.veg_type:
+                    vnames = {"ashbush": "余烬灌木", "greytree": "灰木树", "wallmoss": "壁生苔", "rubble": "碎石堆"}
+                    terrain_seen.append(f"{vnames.get(tile.veg_type, tile.veg_type)}({x},{y})")
+                else:
+                    terrain_seen.append(f"{tnames.get(tile.l1.value, tile.l1.value)}({x},{y})")
+
+                # Structures
+                if tile.structure:
+                    structures_seen.append(f"{tile.structure.building_type.value}({x},{y}) HP:{tile.structure.hp}")
+
+                # Ground items
+                ground = world.ground_items.get((x, y))
+                if ground and ground.items:
+                    item_str = ", ".join(f"{i}×{a}" for i, a in ground.items)
+                    ground_seen.append(f"{item_str}({x},{y})")
+
+        # Other agents in view
+        for aid, other in world.agents.items():
+            if aid != agent_id and other.online and not other.is_dead():
+                d = agent.position.dist(other.position)
+                if d <= view_range:
+                    other_held = other.equipment.main_hand or "空手"
+                    agents_seen.append(f"{other.agent_name}({other.position.x},{other.position.y} 手持:{other_held} HP:{other.health})")
+
+        lines.append(f"\n【视野】{world.day_phase.value}{' 视野'+str(view_range)+'格'}")
+        if terrain_seen:
+            # Prioritize: show actionable resources first
+            resources = [t for t in terrain_seen if '石料' in t or '灌木' in t or '灰木树' in t or '壁生苔' in t or '碎石' in t]
+            other = [t for t in terrain_seen if t not in resources]
+            if resources:
+                sample = resources[:12]
+                lines.append(f"  ⛏ 可采集: {', '.join(sample)}")
+                if len(resources) > 12:
+                    lines.append(f"  ...等共{len(resources)}处资源")
+            # Just show terrain types summary for the rest
+            if other:
+                flat_count = sum(1 for t in other if '平地' in t)
+                sand_count = sum(1 for t in other if '沙地' in t)
+                rock_count = sum(1 for t in other if '基岩' in t)
+                parts = []
+                if flat_count: parts.append(f'平地×{flat_count}')
+                if sand_count: parts.append(f'沙地×{sand_count}')
+                if rock_count: parts.append(f'基岩×{rock_count}')
+                if parts: lines.append(f"  地形: {', '.join(parts)}")
+        if structures_seen:
+            lines.append(f"  建筑: {', '.join(structures_seen)}")
+        if agents_seen:
+            lines.append(f"  附近智能体: {', '.join(agents_seen)}")
+        if ground_seen:
+            lines.append(f"  地面物品: {', '.join(ground_seen)}")
+
+        # Broadcasts
+        for bcast in world.broadcasts:
+            from_pos = world.agents.get(bcast["from"])
+            if from_pos:
+                d = agent.position.dist(from_pos.position)
+                if d <= bcast["range"]:
+                    lines.append(f"\n【广播】{bcast['from_name']}: {bcast['content']}")
+
+        # Pending talk
+        for talk in world.talk_messages:
+            if talk["to"] == agent_id:
+                lines.append(f"\n【待处理】{talk['from_name']}: {talk['content']}")
+
+        # Direct messages
+        for dm in world.direct_messages:
+            if dm["to"] == agent_id:
+                lines.append(f"\n【私信】{dm['from_name']}: {dm['content']}")
+
+        # Weather
+        if world.weather.value == "radiation_storm":
+            lines.append(f"\n【天气】☢️ 辐射风暴 (剩余{world.weather_remaining} tick) - 暴露者-2HP/tick")
+        elif world.weather_warning_sent:
+            lines.append(f"\n【天气】⚠️ 辐射风暴预警 - {STORM_WARNING_TICKS} tick后到达")
+
+        # Energy warning
+        if agent.energy <= 10:
+            lines.append(f"\n⚠️ 能量即将耗尽！请 rest 或使用电池。")
+
+        lines.append(f"\n请决定你的行动。以JSON数组格式返回，如: [{{\"type\": \"move\", \"direction\": \"north\"}}]")
+
+        return "\n".join(lines)
+
+    async def _heartbeat_loop(self):
+        """Periodic heartbeat check."""
+        while self._running:
+            await asyncio.sleep(HEARTBEAT_INTERVAL)
+            # Heartbeats are handled at the WebSocket level by aiohttp
+
+    async def _snapshot_loop(self):
+        """Periodic world state snapshot (every 300 ticks = 10 min)."""
+        while self._running:
+            await asyncio.sleep(600)
+            try:
+                snapshot = {
+                    "tick": self._tick,
+                    "agents": {aid: self.world._agent_state_dict(a) for aid, a in self.world.agents.items()},
+                    "structures": len(self.world.structures),
+                    "weather": self.world.weather.value,
+                }
+                save_snapshot(self._tick, snapshot)
+                print(f"Snapshot saved at tick {self._tick}")
+            except Exception as e:
+                print(f"Snapshot error: {e}")
+
+
+def main():
+    """CLI entry point."""
+    import argparse
+    parser = argparse.ArgumentParser(description="Ember Protocol Game Server")
+    parser.add_argument("--host", default="0.0.0.0", help="Host to bind")
+    parser.add_argument("--port", type=int, default=8765, help="Port")
+    parser.add_argument("--seed", type=int, default=MAP_SEED, help="Map seed")
+    parser.add_argument("--data-dir", default="data", help="Data directory")
+    args = parser.parse_args()
+
+    server = GameServer(data_dir=args.data_dir, seed=args.seed)
+    asyncio.run(server.start(host=args.host, port=args.port))
+
+
+if __name__ == "__main__":
+    main()
