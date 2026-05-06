@@ -164,9 +164,22 @@ class GameServer:
         system_msg = f"[余烬协议] 游戏状态 — Tick {self.world.tick_number} | {time_info} | {weather_info}"
         user_msg = self._build_user_message(agent_id)
 
+        # Include real-time state snapshot
+        state_snapshot = {
+            "position": [agent.position.x, agent.position.y],
+            "health": agent.health, "max_health": agent.max_health,
+            "energy": agent.energy, "max_energy": agent.max_energy,
+            "held_item": agent.equipment.main_hand or "空手",
+            "backup_count": agent.backup_count,
+            "tutorial_phase": agent.tutorial_phase,
+            "inventory_summary": self.world._inventory_summary(agent),
+            "attributes": {"PER": agent.perception, "CON": agent.constitution, "AGI": agent.agility},
+        }
+
         return {
             "type": "tick",
             "tick": self.world.tick_number,
+            "state": state_snapshot,
             "messages": [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},

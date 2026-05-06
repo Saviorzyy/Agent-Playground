@@ -82,6 +82,9 @@ class GameClient:
                 t = frame.get("type")
                 if t == "tick":
                     self._tick_n = frame.get("tick", 0)
+                    # Update real-time state from tick frame
+                    if "state" in frame:
+                        self._state = frame["state"]
                     await self._tick_q.put(frame)
                 elif t == "result":
                     await self._result_q.put(frame)
@@ -161,12 +164,51 @@ def _fmt_tick(frame: dict) -> str:
 
 
 def _fmt_result(frame: dict) -> str:
-    """Format result frame."""
+    """Format result frame with detailed output."""
     results = frame.get("results", [])
     lines = [f"## 行动结果 (Tick {frame.get('tick', '?')})", ""]
     for r in results:
         icon = "✅" if r.get("success") else "❌"
-        lines.append(f"- {icon} **{r.get('type')}**: {r.get('detail', r.get('error_code', ''))}")
+        detail = r.get("detail", r.get("error_code", ""))
+        lines.append(f"- {icon} **{r['type']}**: {detail}")
+
+        # Show items for inspect
+        if r.get("type") == "inspect" and r.get("items"):
+            items = r["items"]
+            item_strs = []
+            for item in items:
+                name = item["item_id"]
+                dur = f" 耐久{item['durability']}" if item.get("durability") else ""
+                item_strs.append(f"{name}×{item['amount']}{dur}")
+            lines.append(f"  📦 物品: {', '.join(item_strs)}")
+
+        # Show recipes for inspect(recipes)
+        if r.get("type") == "inspect" and r.get("recipes"):
+            lines.append(f"  📖 配方数: {len(r['recipes'])}")
+
+        # Show found ores for scan
+        if r.get("type") == "scan" and r.get("found"):
+            for f in r["found"]:
+                lines.append(f"  💎 {f.get('ore', '?')} 在 ({f.get('x','?')},{f.get('y','?')})")
+
+        # Show agents for radio_scan
+        if r.get("type") == "radio_scan" and r.get("agents"):
+            for a in r["agents"]:
+                lines.append(f"  👤 {a.get('name','?')} 距离{a.get('distance','?')}格")
+
+        # Show missing materials
+        if r.get("missing"):
+            items = [f"{k}×{v}" for k, v in r["missing"].items()]
+            lines.append(f"  ❌ 缺少: {', '.join(items)}")
+
+    # Show state delta if present
+    delta = frame.get("state_delta", {})
+    if delta:
+        delta_strs = []
+        for k, v in delta.items():
+            delta_strs.append(f"{k}: {v}")
+        lines.append(f"\n📊 状态变化: {', '.join(delta_strs)}")
+
     return "\n".join(lines)
 
 
@@ -187,7 +229,7 @@ def create_mcp_server(game: GameClient) -> Server:
             ),
             types.Tool(
                 name="ember_act",
-                description="向游戏服务器提交行动。每次最多10个。必须在ember_tick之后调用，使用同一个tick号。返回每个行动的执行结果。",
+                description="向游戏服务器提交行动。每tick最多10个。⚠️ 执行顺序: equip/drop/radio → move → attack → mine/chop/pickup → craft/build/use → rest/scan/inspect。同一优先级的按提交顺序执行。move类会先全部执行完，然后基于最终位置执行chop/mine。",
                 inputSchema={
                     "type": "object",
                     "properties": {
@@ -219,19 +261,24 @@ def create_mcp_server(game: GameClient) -> Server:
             return [types.TextContent(type="text", text=_fmt_result(result))]
 
         elif name == "ember_status":
-            s = game.state
+            s = game.state  # Updated real-time from tick frames
+            pos = s.get("position", "?")
             lines = [
-                "## 智能体状态",
+                "## 智能体状态 (实时)",
                 f"- 名称: {game.agent_name}  ID: {game.agent_id}",
-                f"- 位置: {s.get('position', '?')}",
+                f"- 位置: {pos}",
                 f"- HP: {s.get('health', '?')}/{s.get('max_health', '?')}",
                 f"- 能量: {s.get('energy', '?')}/100",
                 f"- 手持: {s.get('held_item') or '空手'}",
                 f"- 备份机体: {s.get('backup_count', 0)}",
                 f"- 背包: {s.get('inventory_summary', '空')}",
+                f"- 属性: {s.get('attributes', {})}",
             ]
-            if s.get("tutorial_phase") is not None:
-                lines.append(f"- 教程: Phase {s['tutorial_phase']}")
+            tp = s.get("tutorial_phase")
+            if tp is not None:
+                lines.append(f"- 教程: Phase {tp}")
+            else:
+                lines.append(f"- 教程: 已毕业 (自由模式)")
             return [types.TextContent(type="text", text="\n".join(lines))]
 
         return [types.TextContent(type="text", text=f"Unknown tool: {name}")]
