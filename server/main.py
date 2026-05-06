@@ -146,6 +146,12 @@ class GameServer:
 
     def build_tick_for_agent(self, agent_id: str) -> dict:
         """Build a tick frame with full game state for a specific agent."""
+        agent = self.world.agents.get(agent_id)
+        if not agent:
+            return {"type": "tick", "tick": self.world.tick_number, "messages": [
+                {"role": "system", "content": "Agent not found"}
+            ]}
+
         cycle_tick = self.world.tick_number % 900
         day_phase = self.world.day_phase.value
         if day_phase == "day":
