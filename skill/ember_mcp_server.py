@@ -244,6 +244,18 @@ def create_mcp_server(game: GameClient) -> Server:
                 description="查看自身完整状态：位置、HP、能量、背包物品、装备、备份机体数。不消耗游戏内能量。",
                 inputSchema={"type": "object", "properties": {}, "required": []},
             ),
+            types.Tool(
+                name="ember_play",
+                description="自动连续游玩N个tick（默认20），使用内置策略探索采集。一次调用完成多tick，大大节省迭代预算。返回这段时间的行动摘要和状态变化。适合用于长时间挂机探索。",
+                inputSchema={
+                    "type": "object",
+                    "properties": {
+                        "ticks": {"type": "integer", "description": "要自动执行的tick数 (1-200)", "default": 20},
+                        "strategy": {"type": "string", "description": "策略: explore(探索移动), gather(采集资源), mine(专注挖矿), rest(原地休息)", "default": "explore"},
+                    },
+                    "required": [],
+                },
+            ),
         ]
 
     @server.call_tool()
@@ -259,6 +271,96 @@ def create_mcp_server(game: GameClient) -> Server:
                 return [types.TextContent(type="text", text="未提交行动。")]
             result = await game.send_actions(tick, actions[:10])
             return [types.TextContent(type="text", text=_fmt_result(result))]
+
+        elif name == "ember_play":
+            ticks = min(int(arguments.get("ticks", 20)), 200)
+            strategy = arguments.get("strategy", "explore")
+            import random as _rnd
+            summary = {"moves": 0, "chops": 0, "mines": 0, "rests": 0, "wood": 0, "stone": 0, "energy_used": 0}
+            start_energy = game.state.get("energy", 100)
+
+            for i in range(ticks):
+                frame = await game.wait_tick(timeout=10.0)
+                tick = frame.get("tick", 0)
+                msgs = frame.get("messages", [])
+                user_msg = ""
+                for m in msgs:
+                    if m.get("role") == "user":
+                        user_msg = m.get("content", "")
+
+                # Simple rule-based strategies
+                actions = []
+                if strategy == "rest":
+                    actions = [{"type": "rest"}] * 3
+                elif strategy == "mine":
+                    # Find stone coords from user message
+                    import re
+                    stones = re.findall(r'石料.*?\((\d+),(\d+)\)', user_msg)
+                    if stones:
+                        sx, sy = int(stones[0][0]), int(stones[0][1])
+                        actions = [{"type": "move", "direction": "north"}] * _rnd.randint(1, 2)
+                        actions.append({"type": "mine", "target": {"x": sx, "y": sy}})
+                        actions.append({"type": "mine", "target": {"x": sx, "y": sy}})
+                    else:
+                        actions = [{"type": "move", "direction": _rnd.choice(["north","south","east","west"])}] * 2
+                        actions.append({"type": "scan"})
+                elif strategy == "gather":
+                    import re
+                    shrubs = re.findall(r'(?:余烬灌木|灰木树|壁生苔).*?\((\d+),(\d+)\)', user_msg)
+                    moves = _rnd.randint(1, 3)
+                    for _ in range(moves):
+                        actions.append({"type": "move", "direction": _rnd.choice(["north","south","east","west"])})
+                    if shrubs:
+                        sx, sy = int(shrubs[0][0]), int(shrubs[0][1])
+                        actions.append({"type": "chop", "target": {"x": sx, "y": sy}})
+                    if _rnd.random() < 0.3:
+                        actions.append({"type": "rest"})
+                else:  # explore
+                    d1 = _rnd.choice(["north","south","east","west"])
+                    d2 = _rnd.choice(["north","south","east","west"])
+                    actions = [
+                        {"type": "move", "direction": d1},
+                        {"type": "move", "direction": d1},
+                        {"type": "move", "direction": d2},
+                    ]
+                    if _rnd.random() < 0.4:
+                        actions.append({"type": "scan"})
+
+                result = await game.send_actions(tick, actions)
+                for r in result.get("results", []):
+                    if r.get("success"):
+                        t = r.get("type", "")
+                        if t == "move": summary["moves"] += 1
+                        elif t == "chop": summary["chops"] += 1; summary["wood"] += 1
+                        elif t == "mine": summary["mines"] += 1; summary["stone"] += 1
+                        elif t == "rest": summary["rests"] += 1
+                        elif t == "scan": summary["scans"] = summary.get("scans", 0) + 1
+
+            end_energy = game.state.get("energy", 100)
+            summary["energy_used"] = start_energy - end_energy + ticks  # subtract solar recovery
+
+            lines = [
+                f"## 📊 自动游玩 {ticks} ticks 完成",
+                f"策略: {strategy}",
+                f"",
+                f"| 行动 | 次数 |",
+                f"|------|------|",
+                f"| 🚶 移动 | {summary['moves']} |",
+                f"| 🪓 砍伐 | {summary['chops']} (木质+{summary['wood']}) |",
+                f"| ⛏ 采矿 | {summary['mines']} (石料+{summary['stone']}) |",
+                f"| 😴 休息 | {summary['rests']} |",
+                f"| 📡 探测 | {summary.get('scans', 0)} |",
+                f"",
+                f"### 最终状态",
+                f"- 位置: {game.state.get('position', '?')}",
+                f"- HP: {game.state.get('health', '?')}/{game.state.get('max_health', '?')}",
+                f"- 能量: {game.state.get('energy', '?')}/100",
+                f"- 背包: {game.state.get('inventory_summary', '?')}",
+                f"- 教程: Phase {game.state.get('tutorial_phase', '毕业')}",
+                f"",
+                f"可继续调用 ember_tick 手动操作，或再次 ember_play 批量游玩。",
+            ]
+            return [types.TextContent(type="text", text="\n".join(lines))]
 
         elif name == "ember_status":
             s = game.state  # Updated real-time from tick frames
