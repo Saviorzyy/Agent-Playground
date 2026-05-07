@@ -165,6 +165,9 @@ class Tile:
     def passable(self) -> bool:
         if self.l1 in (Terrain.WATER, Terrain.TRENCH):
             return False
+        # Stone blocks movement — must mine through it (cave-digging mechanic)
+        if self.l2_type == 'stone' and self.stone_amount > 0:
+            return False
         if self.structure and self.structure.building_type == BuildingType.WALL:
             return False
         if self.structure and self.structure.building_type == BuildingType.DOOR and not self.structure.open:

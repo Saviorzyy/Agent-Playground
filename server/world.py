@@ -606,10 +606,14 @@ class World:
         if tile.l2_type != 'stone' or tile.stone_amount <= 0:
             return {"type": "mine", "success": False, "error_code": "INVALID_TARGET", "detail": "该格无可开采资源"}
 
-        # Check agent standing position
+        # Agent must stand on non-Stone, non-water/trench ground to mine
         agent_tile = self.get_tile(agent.position.x, agent.position.y)
-        if agent_tile and agent_tile.l1 in IMPASSABLE:
-            return {"type": "mine", "success": False, "error_code": "INVALID_TARGET", "detail": "站在不可采掘地形上"}
+        if not agent_tile:
+            return {"type": "mine", "success": False, "error_code": "INVALID_TARGET", "detail": "无法确定站立位置"}
+        if agent_tile.l1 in IMPASSABLE:
+            return {"type": "mine", "success": False, "error_code": "INVALID_TARGET", "detail": f"站在{tile.l1.value}上不可采掘"}
+        if agent_tile.l2_type == 'stone' and agent_tile.stone_amount > 0:
+            return {"type": "mine", "success": False, "error_code": "INVALID_TARGET", "detail": "站在石料矿层上无法开采——需站在平地/沙地/基岩上开采相邻石料"}
 
         # Tool check
         held_tool = self.get_held_tool(agent)
@@ -1299,8 +1303,8 @@ class World:
                 dy = 1 if ty > agent.position.y else (-1 if ty < agent.position.y else 0)
                 nx, ny = agent.position.x + dx, agent.position.y + dy
                 tile = self.get_tile(nx, ny)
-                if tile and tile.passable and agent.energy >= ENERGY_MOVE:
-                    agent.energy -= ENERGY_MOVE
+                if tile and tile.passable:
+                    # Move is free
                     agent.position = Position(nx, ny)
                 else:
                     agent.status = ActionStatus.IDLE
