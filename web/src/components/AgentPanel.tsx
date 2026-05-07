@@ -198,8 +198,8 @@ export default function AgentPanel({ agent }: AgentPanelProps) {
 
         {/* Energy explanation */}
         <div style={{ marginTop: 10, padding: 6, background: '#1a1e2a', borderRadius: 4, fontSize: 9, color: '#666', lineHeight: '14px' }}>
-          ⚡ 行动消耗: 移动-1 采集-2 合成-3 建造-5<br />
-          🔋 恢复: 太阳能+1/tick 休息+3/tick
+          🚶 移动免费 | ⛏ 采集-2 | 🔧 合成-3 | 🏗 建造-5<br />
+          🔋 太阳能+1/tick | 😴 休息+8/tick
         </div>
       </div>
     </div>

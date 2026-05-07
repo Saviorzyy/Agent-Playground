@@ -744,19 +744,27 @@ class World:
         if agent.energy < ENERGY_SCAN:
             return {"type": "scan", "success": False, "error_code": "INSUFFICIENT_ENERGY", "detail": "能量不足"}
         agent.energy -= ENERGY_SCAN
-        # Reveal hidden ores in 5x5 area
+        # Reveal hidden ores AND surface stone in 5x5 area
         px, py = agent.position.x, agent.position.y
         found = []
+        stone_found = []
         for dy in range(-2, 3):
             for dx in range(-2, 3):
                 x, y = px + dx, py + dy
                 if not self.in_bounds(x, y): continue
                 tile = self.get_tile(x, y)
-                if tile and tile.l2_type == 'stone' and tile.ore_type and not tile.ore_exposed:
+                if not tile: continue
+                # Reveal hidden ores
+                if tile.l2_type == 'stone' and tile.ore_type and not tile.ore_exposed:
                     tile.ore_exposed = True
                     found.append({"x": x, "y": y, "ore": tile.ore_type})
-        self._log_event("agent_scan", {"agent_id": agent.agent_id, "found": len(found)})
-        return {"type": "scan", "success": True, "detail": f"探测完成，发现 {len(found)} 处隐藏矿脉", "found": found}
+                # Surface stone deposits
+                if tile.l2_type == 'stone' and tile.stone_amount > 0:
+                    stone_found.append({"x": x, "y": y, "amount": tile.stone_amount})
+
+        self._log_event("agent_scan", {"agent_id": agent.agent_id, "found": len(found), "stone": len(stone_found)})
+        detail = f"探测完成，发现 {len(found)} 处隐藏矿脉, {len(stone_found)} 处石料"
+        return {"type": "scan", "success": True, "detail": detail, "found": found, "stone_deposits": stone_found}
 
     def _do_talk(self, agent: AgentState, action: dict) -> dict:
         target_id = action.get("target_agent", "")

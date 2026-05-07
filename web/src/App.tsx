@@ -91,7 +91,7 @@ export default function App() {
       fetchAgents()
       fetchMap()
       fetchEvents()
-    }, 3000)
+    }, 1500)  // 1.5s refresh for real-time feel
     return () => clearInterval(interval)
   }, [fetchStatus, fetchAgents, fetchMap, fetchEvents])
 

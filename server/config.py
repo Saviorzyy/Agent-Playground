@@ -40,7 +40,7 @@ VISION_STORM_PENALTY = -2
 VISION_SEARCHLIGHT_NIGHT = 4
 
 # ── Energy ───────────────────────────────────────
-ENERGY_MOVE = 1
+ENERGY_MOVE = 0              # 移动不消耗能量
 ENERGY_MINE = 2
 ENERGY_CHOP = 2
 ENERGY_CRAFT = 3
@@ -55,7 +55,7 @@ ENERGY_USE = 1
 ENERGY_PICKUP = 1
 
 ENERGY_RECOVER_SOLAR = 1     # per tick
-ENERGY_RECOVER_REST = 3      # per tick
+ENERGY_RECOVER_REST = 8      # per tick (原来3, 提高恢复速度)
 ENERGY_RECOVER_POWER_NODE = 2  # per tick
 ENERGY_BATTERY = 30          # instant
 
