@@ -3,6 +3,7 @@
 > **日期**: 2026-05-08
 > **会话目标**: 根据 MVP-GAP-ANALYSIS.md 差异分析报告，实现全部 14 项 P0 高严重度缺失功能
 > **PRD 版本**: v1.3.2-mvp
+> **更新**: MCP Agent 接入优化 + 降落仓生成位置修复 + 教程系统改进
 
 ---
 
@@ -115,32 +116,92 @@
 
 ---
 
-## 五、GitHub 推送
+## 五、MCP Agent 接入优化
+
+### 5.1 问题分析
+
+通过观察 Hermes agent 实际游玩过程，识别出 6 类问题：
+
+| 严重度 | 问题 | 根因 |
+|--------|------|------|
+| 致命 | MCP 工具加载需要重启会话 | `mcp:` vs `mcp_servers:` 配置键名不一致 |
+| 致命 | websockets 16.0 `.closed` 属性不存在 | MCP Server 使用旧版 API |
+| 严重 | 教程提示缺乏精确行动示例 | AI Agent 无法从文字描述推断 JSON 格式 |
+| 中等 | 每tick需两次 MCP 往返（tick+act） | 缺少一站式工具 |
+| 中等 | WebSocket 断开后 MCP Server 崩溃 | 无重连机制 |
+| 中等 | 注册 prompt 引导过时 | 仅推荐 `ember_tick`，缺少 `ember_step` |
+
+### 5.2 MCP Server 鲁棒性 (commit `c287b04`, `a487e1f`)
+
+| 改进 | 说明 |
+|------|------|
+| 自动重连 | WebSocket 断开后指数退避重试（2s/4s/8s/16s/32s，最多 5 次） |
+| 超时容错 | `wait_tick` 超时返回友好错误信息而非抛异常崩溃 |
+| 降级启动 | 初始连接失败也能启动 MCP，后续 tool 调用时自动重连 |
+| 全局异常捕获 | 所有 tool handler 包在 try/except 中，永不因游戏连接问题退出进程 |
+| Ping/Pong | 正确响应服务端心跳检测 |
+| websockets 16.0 兼容 | 移除 `ws.closed` 检查，改用 `_ok` 标志位 |
+
+### 5.3 新增 `ember_step` 工具 (commit `c287b04`)
+
+一站式完成：等待 tick + 提交 actions + 获取结果，单次 MCP 调用。
+
+```
+之前: ember_tick (等tick) → 解析状态 → ember_act (提交行动)  = 2次往返
+现在: ember_step (actions=[...])                           = 1次往返
+```
+
+### 5.4 教程系统优化 (commit `c287b04`)
+
+- 每个 Phase 的提示从文字描述改为**精确 JSON 行动示例**
+- Tick 帧新增 `suggested_actions` 字段，agent 可直接作为 `actions` 参数传入
+- Phase 1 的建造坐标基于 agent 当前位置动态生成
+
+### 5.5 Agent 引导更新 (commits `5150703`, `03533d1`, `cfeb6a7`)
+
+| 文件 | 改动 |
+|------|------|
+| `ACTIONS_GUIDE` (MCP Server) | 推荐用 `ember_step`，引导使用 `suggested_actions` |
+| `App.tsx` 注册 prompt | 移除 `hermes mcp add`，推荐直接编辑 YAML；推荐 `ember_step`；移除"重启Agent"步骤 |
+| `SKILL.md` (Hermes Skill) | 全面重写：推荐 `ember_step`、教程 `suggested_actions`、MCP 鲁棒性说明；精简从 315→200 行 |
+
+---
+
+## 六、GitHub 推送
 
 | 仓库 | Commit | 内容 |
 |------|--------|------|
 | Saviorzyy/Ember-Protocol | `e8bf4a4` | 全部 P0 服务器代码 + Web UI + 客户端 |
+| Saviorzyy/Ember-Protocol | `3540185` | 降落仓生成位置修复 + PRD 更新 |
+| Saviorzyy/Ember-Protocol | `c287b04` | MCP 鲁棒性 + `ember_step` + 教程优化 |
+| Saviorzyy/Ember-Protocol | `5150703` ~ `cfeb6a7` | Agent 引导 prompt 修复 (4 commits) |
 | Saviorzyy/Ember-Protocol-Player | `813fbdc` | MCP Server + Skill 适配更新 |
+| Saviorzyy/Ember-Protocol-Player | `e15c69f` | MCP 鲁棒性 + `ember_step` 同步 |
+| Saviorzyy/Ember-Protocol-Player | `ccf3f8e` | ACTIONS_GUIDE 更新 |
+| Saviorzyy/Ember-Protocol-Player | `7c1d7a1` | websockets 16.0 兼容性修复 |
 
 ---
 
-## 六、文件变更统计
+## 七、文件变更统计
 
 | 文件 | 原始行数 | 更新后行数 | 变化 |
 |------|---------|-----------|------|
-| server/world.py | 1,338 | 1,690 | +352 |
-| server/main.py | 386 | 419 | +33 |
+| server/world.py | 1,338 | 1,691 | +353 |
+| server/main.py | 386 | 434 | +48 |
 | server/ws_handler.py | 217 | 285 | +68 |
 | server/models.py | 226 | 229 | +3 |
 | server/db.py | 88 | 127 | +39 |
 | server/http_routes.py | 199 | 235 | +36 |
-| skill/ember_mcp_server.py | 451 | 489 | +38 |
+| skill/ember_mcp_server.py | 451 | 563 | +112 |
 | skill/ember_skill.py | 304 | 306 | +2 |
 | web/src/components/GameMap.tsx | ~300 | 379 | +~79 |
+| web/src/App.tsx | ~280 | ~290 | +~10 |
+| docs/PRD-MVP.zh-CN.md | — | — | +1 (投放条件) |
+| docs/PRD.en.md | — | — | +1 (deployment condition) |
 
 ---
 
-## 七、遗留问题 (P1/P2，未在本次实现)
+## 八、遗留问题 (P1/P2，未在本次实现)
 
 ### P1 — 影响游戏完整度
 1. 降落仓部署/拆解流程
