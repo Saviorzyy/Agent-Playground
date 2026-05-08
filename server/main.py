@@ -185,7 +185,7 @@ class GameServer:
             weather_info = f"辐射风暴 (剩余{self.world.weather_remaining} tick)"
 
         system_msg = f"[余烬协议] 游戏状态 — Tick {self.world.tick_number} | {time_info} | {weather_info}"
-        user_msg = self._build_user_message(agent_id)
+        user_msg, suggested_actions = self._build_user_message(agent_id)
 
         # Include real-time state snapshot
         state_snapshot = {
@@ -203,6 +203,7 @@ class GameServer:
             "type": "tick",
             "tick": self.world.tick_number,
             "state": state_snapshot,
+            "suggested_actions": suggested_actions,
             "messages": [
                 {"role": "system", "content": system_msg},
                 {"role": "user", "content": user_msg},
@@ -213,7 +214,7 @@ class GameServer:
         """Build the detailed game state user message for an agent."""
         agent = self.world.agents.get(agent_id)
         if not agent:
-            return "=== 游戏状态 ===\n智能体未找到。"
+            return "=== 游戏状态 ===\n智能体未找到。", []
 
         world = self.world
         lines = ["=== 游戏状态 ===", ""]
@@ -226,30 +227,51 @@ class GameServer:
                      f"视野:{agent.view_range(world.day_phase, world.weather)}格 移速:{agent.move_speed()}格/tick")
         lines.append(f"  备份机体:{agent.backup_count}")
 
-        # Tutorial guidance
+        # Tutorial guidance with precise JSON action examples
         tp = agent.tutorial_phase
+        suggested_actions = []
         if tp == 0:
-            lines.append(f"\n📖 【教程 Phase 0: 苏醒】")
-            lines.append(f"  你在降落仓中苏醒。系统消息: 背包里有工作台和熔炉。")
-            lines.append(f"  引导行动: inspect(inventory) → 查看初始物资")
+            lines.append(f"\n**[教程 Phase 0: 苏醒]**")
+            lines.append(f"  你在降落仓中苏醒，背包里有工作台和熔炉。")
+            lines.append(f"  精确行动: `[{{\"type\":\"inspect\",\"target\":\"inventory\"}}]`")
+            suggested_actions = [{"type": "inspect", "target": "inventory"}]
         elif tp == 1:
-            lines.append(f"\n📖 【教程 Phase 1: 部署与采集】")
-            lines.append(f"  走出降落仓，部署工作台和熔炉。降落仓护盾内有应急电力。")
-            lines.append(f"  引导行动: 移动到平坦空地 → build(workbench) → build(furnace)")
+            px, py = pos.x, pos.y
+            bx, by = px + 1, py
+            lines.append(f"\n**[教程 Phase 1: 部署与采集]**")
+            lines.append(f"  走出降落仓，在旁边建造工作台和熔炉（物品在背包中）。")
+            lines.append(f"  精确行动: `[{{\"type\":\"move\",\"direction\":\"east\"}},{{\"type\":\"build\",\"building_type\":\"workbench\",\"target\":{{\"x\":{bx},\"y\":{by}}}}},{{\"type\":\"build\",\"building_type\":\"furnace\",\"target\":{{\"x\":{bx},\"y\":{by}}}}}]`")
+            suggested_actions = [
+                {"type": "move", "direction": "east"},
+                {"type": "build", "building_type": "workbench", "target": {"x": bx, "y": by}},
+                {"type": "build", "building_type": "furnace", "target": {"x": bx, "y": by}},
+            ]
         elif tp == 2:
-            lines.append(f"\n📖 【教程 Phase 2: 合成与装备】")
-            lines.append(f"  在工作台旁合成一把基础采掘器，然后装备它。")
-            lines.append(f"  引导行动: craft(basic_excavator) → equip(basic_excavator)")
+            lines.append(f"\n**[教程 Phase 2: 合成与装备]**")
+            lines.append(f"  在工作台旁合成基础采掘器（需要2石料），然后装备。")
+            lines.append(f"  精确行动: `[{{\"type\":\"craft\",\"recipe\":\"basic_excavator\"}},{{\"type\":\"equip\",\"item_id\":\"basic_excavator\",\"slot\":\"main_hand\"}}]`")
+            suggested_actions = [
+                {"type": "craft", "recipe": "basic_excavator"},
+                {"type": "equip", "item_id": "basic_excavator", "slot": "main_hand"},
+            ]
         elif tp == 3:
-            lines.append(f"\n📖 【教程 Phase 3: 建造与庇护】")
-            lines.append(f"  辐射风暴即将来临！合成建材方块，围合一个封闭空间。")
-            lines.append(f"  引导行动: craft(building_block)×8 → build(wall×4) → build(door)")
+            px, py = pos.x, pos.y
+            lines.append(f"\n**[教程 Phase 3: 建造与庇护]**")
+            lines.append(f"  辐射风暴即将来临！合成建材方块，围合封闭空间。")
+            lines.append(f"  精确行动: `[{{\"type\":\"craft\",\"recipe\":\"building_block\"}},{{\"type\":\"craft\",\"recipe\":\"building_block\"}},{{\"type\":\"build\",\"building_type\":\"wall\",\"target\":{{\"x\":{px+1},\"y\":{py}}}}},{{\"type\":\"build\",\"building_type\":\"door\",\"target\":{{\"x\":{px-1},\"y\":{py}}}}}]`")
+            suggested_actions = [
+                {"type": "craft", "recipe": "building_block"},
+                {"type": "craft", "recipe": "building_block"},
+                {"type": "build", "building_type": "wall", "target": {"x": px+1, "y": py}},
+                {"type": "build", "building_type": "door", "target": {"x": px-1, "y": py}},
+            ]
         elif tp == 4:
-            lines.append(f"\n📖 【教程 Phase 4: 通信与生存】")
-            lines.append(f"  附近可能有其他幸存者。尝试广播你的位置。")
-            lines.append(f"  引导行动: radio_broadcast / talk / rest")
+            lines.append(f"\n**[教程 Phase 4: 通信与生存]**")
+            lines.append(f"  尝试广播或休息，完成教程毕业。")
+            lines.append(f"  精确行动: `[{{\"type\":\"rest\"}}]`")
+            suggested_actions = [{"type": "rest"}]
         elif tp is None:
-            lines.append(f"\n🎮 【自由模式】已毕业，自主探索生存")
+            lines.append(f"\n**[自由模式]** 已毕业，自主探索生存")
 
         # Vicinity
         view_range = agent.view_range(world.day_phase, world.weather)
@@ -369,7 +391,7 @@ class GameServer:
 
         lines.append(f"\n请决定你的行动。以JSON数组格式返回，如: [{{\"type\": \"move\", \"direction\": \"north\"}}]")
 
-        return "\n".join(lines)
+        return "\n".join(lines), suggested_actions
 
     async def _heartbeat_loop(self):
         """W-5: Periodic heartbeat check."""
