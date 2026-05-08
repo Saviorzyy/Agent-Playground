@@ -178,19 +178,20 @@ class WSManager:
                                 break
 
                     elif phase == 1:
-                        # Phase 1: 部署与采集 — move out + build OR mine
+                        # Phase 1: 走出降落仓护盾 — successful move or build or mine
                         has_move = any(r.get("type") == "move" and r.get("success") for r in agent_results)
                         has_mine = any(r.get("type") == "mine" and r.get("success") for r in agent_results)
                         has_build = any(r.get("type") == "build" and r.get("success") for r in agent_results)
-                        if has_mine or (has_move and has_build):
+                        if has_move or has_mine or has_build:
                             agent.tutorial_phase = 2
                             progressed = True
 
                     elif phase == 2:
-                        # Phase 2: 合成与装备 — craft + equip a tool
+                        # Phase 2: 建造与合成 — build or mine or craft
+                        has_build = any(r.get("type") == "build" and r.get("success") for r in agent_results)
+                        has_mine = any(r.get("type") == "mine" and r.get("success") for r in agent_results)
                         has_craft = any(r.get("type") == "craft" and r.get("success") for r in agent_results)
-                        has_equip = any(r.get("type") == "equip" and r.get("success") for r in agent_results)
-                        if has_craft or has_equip:
+                        if has_build or has_mine or has_craft:
                             agent.tutorial_phase = 3
                             progressed = True
 
@@ -211,7 +212,7 @@ class WSManager:
 
                     if not progressed:
                         agent.tutorial_skip_count += 1
-                        if agent.tutorial_skip_count >= 3:
+                        if agent.tutorial_skip_count >= TUTORIAL_MAX_SKIPS:
                             agent.tutorial_phase = None  # Auto-graduate after 3 skips
                     else:
                         agent.tutorial_skip_count = 0

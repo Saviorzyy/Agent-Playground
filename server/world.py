@@ -824,15 +824,18 @@ class World:
                 tile = self.get_tile(x, y)
                 if not tile: continue
                 # Reveal hidden ores
-                if tile.l2_type == 'stone' and tile.ore_type and not tile.ore_exposed:
-                    tile.ore_exposed = True
-                    found.append({"x": x, "y": y, "ore": tile.ore_type})
+                if tile.l2_type == 'stone' and tile.ore_type:
+                    if not tile.ore_exposed:
+                        tile.ore_exposed = True
+                    found.append({"x": x, "y": y, "ore": tile.ore_type, "exposed": tile.ore_exposed})
                 # Surface stone deposits
                 if tile.l2_type == 'stone' and tile.stone_amount > 0:
                     stone_found.append({"x": x, "y": y, "amount": tile.stone_amount})
 
         self._log_event("agent_scan", {"agent_id": agent.agent_id, "found": len(found), "stone": len(stone_found)})
-        detail = f"探测完成，发现 {len(found)} 处隐藏矿脉, {len(stone_found)} 处石料"
+        exposed = sum(1 for f in found if f.get("exposed"))
+        hidden = len(found) - exposed
+        detail = f"探测完成: {hidden} 处新矿脉, {exposed} 处已知矿脉, {len(stone_found)} 处石料"
         return {"type": "scan", "success": True, "detail": detail, "found": found, "stone_deposits": stone_found}
 
     def _do_talk(self, agent: AgentState, action: dict) -> dict:
@@ -1243,17 +1246,23 @@ class World:
                         return {"type": "build", "success": False, "error_code": "TILE_BLOCKED",
                                 "detail": "降落仓护盾范围内不可建造"}
 
-        # Check materials
-        costs = BUILD_COSTS.get(building_type, {})
-        for mat, amt in costs.items():
-            if not self.has_item(agent, mat, amt):
-                costs_str = ", ".join(f"{m}×{a}" for m, a in BUILD_COSTS.get(building_type, {}).items())
-                return {"type": "build", "success": False, "error_code": "MISSING_MATERIALS",
-                        "detail": f"缺少 {mat}×{amt} (合成{building_type}需: {costs_str})", "missing": {mat: amt}}
+        # Check if agent has the building as an inventory item (deploy mode — no material cost)
+        deploy_from_inventory = self.has_item(agent, building_type, 1)
+        if not deploy_from_inventory:
+            # Fallback: require BUILD_COSTS materials
+            costs = BUILD_COSTS.get(building_type, {})
+            for mat, amt in costs.items():
+                if not self.has_item(agent, mat, amt):
+                    costs_str = ", ".join(f"{m}×{a}" for m, a in BUILD_COSTS.get(building_type, {}).items())
+                    return {"type": "build", "success": False, "error_code": "MISSING_MATERIALS",
+                            "detail": f"缺少 {mat}×{amt} (合成{building_type}需: {costs_str})", "missing": {mat: amt}}
 
-        # Consume materials
-        for mat, amt in costs.items():
-            self.remove_item(agent, mat, amt)
+            # Consume materials
+            for mat, amt in costs.items():
+                self.remove_item(agent, mat, amt)
+        else:
+            # Deploy from inventory — consume the item
+            self.remove_item(agent, building_type, 1)
 
         agent.energy -= ENERGY_BUILD
 
@@ -1501,6 +1510,10 @@ class World:
                 agent.health -= dmg
                 agent.radiation_debuff = True
                 self._log_event("radiation_damage", {"agent_id": agent.agent_id, "damage": dmg})
+                self.tick_notifications[agent.agent_id].append({
+                    "type": "radiation_damage", "damage": dmg,
+                    "hp_remaining": agent.health, "source": "area_radiation"
+                })
                 if agent.health <= 0:
                     self._handle_death(agent)
                     continue

@@ -278,7 +278,7 @@ GROUND_MAX_PER_TILE = 3
 GROUND_DECAY_TICKS = 900
 
 # ── Tutorial ─────────────────────────────────────
-TUTORIAL_MAX_SKIPS = 3
+TUTORIAL_MAX_SKIPS = 5
 
 # ── Spawn ────────────────────────────────────────
 SPAWN_Y_RANGE = (90, 110)

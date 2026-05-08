@@ -242,22 +242,27 @@ class GameServer:
             suggested_actions = [{"type": "inspect", "target": "inventory"}]
         elif tp == 1:
             px, py = pos.x, pos.y
-            bx, by = px + 1, py
+            # Must move 4+ tiles to escape drop pod shield (range 3)
+            bx, by = px + 4, py
+            fx, fy = px + 5, py
             lines.append(f"\n**[教程 Phase 1: 部署与采集]**")
-            lines.append(f"  走出降落仓，在旁边建造工作台和熔炉（物品在背包中）。")
-            lines.append(f"  精确行动: `[{{\"type\":\"move\",\"direction\":\"east\"}},{{\"type\":\"build\",\"building_type\":\"workbench\",\"target\":{{\"x\":{bx},\"y\":{by}}}}},{{\"type\":\"build\",\"building_type\":\"furnace\",\"target\":{{\"x\":{bx},\"y\":{by}}}}}]`")
+            lines.append(f"  走出降落仓护盾范围（4格以上），建造工作台和熔炉（背包中的成品直接部署，无需额外材料）。")
+            lines.append(f"  精确行动: 先走4步离开护盾，然后建造。")
             suggested_actions = [
                 {"type": "move", "direction": "east"},
-                {"type": "build", "building_type": "workbench", "target": {"x": bx, "y": by}},
-                {"type": "build", "building_type": "furnace", "target": {"x": bx, "y": by}},
+                {"type": "move", "direction": "east"},
+                {"type": "move", "direction": "east"},
+                {"type": "move", "direction": "east"},
             ]
         elif tp == 2:
-            lines.append(f"\n**[教程 Phase 2: 合成与装备]**")
-            lines.append(f"  在工作台旁合成基础采掘器（需要2石料），然后装备。")
-            lines.append(f"  精确行动: `[{{\"type\":\"craft\",\"recipe\":\"basic_excavator\"}},{{\"type\":\"equip\",\"item_id\":\"basic_excavator\",\"slot\":\"main_hand\"}}]`")
+            px, py = pos.x, pos.y
+            lines.append(f"\n**[教程 Phase 2: 建造与合成]**")
+            lines.append(f"  部署工作台和熔炉（背包成品直接放置），然后采集石料合成工具。")
+            lines.append(f"  精确行动: 建造工作台+熔炉（背包中的成品无需额外材料），或采集附近资源。")
             suggested_actions = [
-                {"type": "craft", "recipe": "basic_excavator"},
-                {"type": "equip", "item_id": "basic_excavator", "slot": "main_hand"},
+                {"type": "build", "building_type": "workbench", "target": {"x": px+1, "y": py}},
+                {"type": "build", "building_type": "furnace", "target": {"x": px-1, "y": py}},
+                {"type": "scan"},
             ]
         elif tp == 3:
             px, py = pos.x, pos.y
@@ -367,11 +372,23 @@ class GameServer:
             if other:
                 flat_count = sum(1 for t in other if '平地' in t)
                 sand_count = sum(1 for t in other if '沙地' in t)
-                rock_count = sum(1 for t in other if '基岩' in t)
+                rock_tiles = [t for t in other if '基岩' in t]
                 parts = []
                 if flat_count: parts.append(f'平地×{flat_count}')
                 if sand_count: parts.append(f'沙地×{sand_count}')
-                if rock_count: parts.append(f'基岩×{rock_count}')
+                # Show nearby rock tiles with coords (distance ≤ 2 for movement planning)
+                import re
+                nearby_rocks = []
+                for rt in rock_tiles:
+                    m = re.search(r'\((\d+),(\d+)\)', rt)
+                    if m:
+                        rx, ry = int(m.group(1)), int(m.group(2))
+                        if abs(rx - pos.x) + abs(ry - pos.y) <= 2:
+                            nearby_rocks.append(rt)
+                if nearby_rocks:
+                    parts.append(f'基岩: {", ".join(nearby_rocks[:6])}')
+                elif rock_tiles:
+                    parts.append(f'基岩×{len(rock_tiles)}')
                 if parts: lines.append(f"  地形: {', '.join(parts)}")
         if structures_seen:
             lines.append(f"  建筑: {', '.join(structures_seen)}")

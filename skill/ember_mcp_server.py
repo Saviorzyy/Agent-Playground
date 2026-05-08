@@ -34,7 +34,7 @@ Dependencies: pip install websockets mcp requests
 """
 
 from __future__ import annotations
-import asyncio, json, sys, os, argparse, traceback
+import asyncio, json, sys, os, argparse, traceback, time
 from typing import Optional
 
 import websockets
@@ -66,6 +66,7 @@ class GameClient:
         self._event_q: asyncio.Queue = asyncio.Queue()
         self._ok = False
         self._tick_n = 0
+        self._last_tick_time: float = 0.0
         self._state = {}
         self._reader_task = None
         self._reconnect_lock = asyncio.Lock()
@@ -129,6 +130,7 @@ class GameClient:
                 t = frame.get("type")
                 if t == "tick":
                     self._tick_n = frame.get("tick", 0)
+                    self._last_tick_time = time.monotonic()
                     if "state" in frame:
                         self._state = frame["state"]
                     await self._tick_q.put(frame)
@@ -149,7 +151,18 @@ class GameClient:
             self._ok = False
 
     async def _ensure_connected(self):
-        """Auto-reconnect if disconnected."""
+        """Auto-reconnect if disconnected or connection stale."""
+        # Check if connection is alive by verifying recent tick activity
+        if self._ok and self.ws:
+            if self._last_tick_time > 0:
+                age = time.monotonic() - self._last_tick_time
+                if age > self.TICK_TIMEOUT:
+                    print(f"[Ember MCP] No tick for {age:.0f}s, connection stale", file=sys.stderr)
+                    self._ok = False
+            elif self._tick_n == 0:
+                # Never received a tick yet - not actually connected
+                self._ok = False
+
         if self._ok and self.ws:
             return True
         if self._reconnect_lock.locked():
@@ -521,18 +534,54 @@ def create_mcp_server(game: GameClient) -> Server:
                     elif strategy == "gather":
                         import re
                         shrubs = re.findall(r'(?:余烬灌木|灰木树|壁生苔).*?\((\d+),(\d+)\)', user_msg)
-                        for _ in range(_rnd.randint(1, 3)):
+                        stones = re.findall(r'石料.*?\((\d+),(\d+)\)', user_msg)
+                        for _ in range(_rnd.randint(1, 2)):
                             actions.append({"type": "move", "direction": _rnd.choice(["north","south","east","west"])})
                         if shrubs:
                             sx, sy = int(shrubs[0][0]), int(shrubs[0][1])
                             actions.append({"type": "chop", "target": {"x": sx, "y": sy}})
+                        if stones:
+                            sx, sy = int(stones[0][0]), int(stones[0][1])
+                            actions.append({"type": "mine", "target": {"x": sx, "y": sy}})
                         if _rnd.random() < 0.3:
                             actions.append({"type": "rest"})
-                    else:  # explore
-                        d1 = _rnd.choice(["north","south","east","west"])
-                        d2 = _rnd.choice(["north","south","east","west"])
-                        actions = [{"type": "move", "direction": d1}, {"type": "move", "direction": d1}, {"type": "move", "direction": d2}]
-                        if _rnd.random() < 0.4:
+                    else:  # explore — direction-persistent with resource seeking
+                        # Pick a primary direction and persist (avoid random walk)
+                        explore_dirs = ["north", "south", "east", "west"]
+
+                        # Try to move toward nearest visible resource
+                        target_dir = None
+                        import re
+                        res_matches = re.findall(r'(?:石料|灌木|灰木树|壁生苔|铁矿|铜矿).*?\((\d+),(\d+)\)', user_msg)
+                        if res_matches:
+                            rx, ry = int(res_matches[0][0]), int(res_matches[0][1])
+                            # Parse current position from tick frame
+                            pos = game.state.get("position", [0, 0])
+                            cx, cy = pos[0], pos[1]
+                            dx = rx - cx
+                            dy = ry - cy
+                            if abs(dx) > abs(dy):
+                                target_dir = "east" if dx > 0 else "west"
+                            elif dy != 0:
+                                target_dir = "south" if dy > 0 else "north"
+
+                        if target_dir:
+                            d1 = target_dir
+                        else:
+                            # Pick a random direction but bias away from map edges
+                            pos = game.state.get("position", [100, 100])
+                            cx, cy = pos[0], pos[1]
+                            weights = []
+                            for d in explore_dirs:
+                                if d == "north": w = max(cy, 10)
+                                elif d == "south": w = max(199 - cy, 10)
+                                elif d == "west": w = max(cx, 10)
+                                else: w = max(199 - cx, 10)
+                                weights.append(w)
+                            d1 = _rnd.choices(explore_dirs, weights=weights, k=1)[0]
+
+                        actions = [{"type": "move", "direction": d1}] * 3
+                        if _rnd.random() < 0.3:
                             actions.append({"type": "scan"})
 
                     result = await game.send_actions(tick, actions)
