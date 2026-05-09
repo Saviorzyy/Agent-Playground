@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import sqlite3
 import time
 import sys
 from aiohttp import web
@@ -11,7 +12,7 @@ import aiohttp_cors
 from .world import World
 from .ws_handler import WSManager
 from .http_routes import handle_register, handle_status, handle_map_data, handle_agents_list, handle_agent_detail, handle_actions_log, handle_events
-from .db import init_db, save_snapshot, load_latest_snapshot, read_wal_after
+from .db import init_db, save_snapshot, load_latest_snapshot, read_wal_after, truncate_wal
 from .config import MAP_SEED, TICK_INTERVAL, TICK_CADENCE, HEARTBEAT_INTERVAL, HEARTBEAT_MAX_MISS
 
 
@@ -34,12 +35,15 @@ class GameServer:
         if snapshot:
             tick, data = snapshot
             self._tick = tick + 1
-            print(f"Loaded snapshot from tick {tick}")
+            # Clear WAL entries at or after snapshot tick to prevent UNIQUE conflicts
+            truncate_wal(tick)
+            print(f"Loaded snapshot from tick {tick}, WAL cleaned")
 
         # Register token hashes from DB
-        for agent_id in list(self.world.agents.keys()):
-            # Load from DB
-            pass
+        conn = sqlite3.connect(db_path)
+        for row in conn.execute("SELECT agent_id, token_hash FROM agents").fetchall():
+            self.world.token_hashes[row[0]] = row[1]
+        conn.close()
 
     async def start(self, host: str = "0.0.0.0", port: int = 8765):
         """Start the game server."""

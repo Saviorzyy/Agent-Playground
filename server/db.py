@@ -101,7 +101,7 @@ def write_wal_entries(tick: int, changes: list[dict]):
     conn = get_conn()
     for seq, change in enumerate(changes):
         conn.execute(
-            "INSERT INTO wal_log (tick, seq, change_type, change_data) VALUES (?,?,?,?)",
+            "INSERT OR IGNORE INTO wal_log (tick, seq, change_type, change_data) VALUES (?,?,?,?)",
             (tick, seq, change.get("type", ""), json.dumps(change))
         )
     conn.commit()
