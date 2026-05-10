@@ -286,3 +286,58 @@ SPAWN_MIN_DISTANCE = 10
 
 # ── Initial Inventory ────────────────────────────
 INITIAL_ITEMS = {"workbench": 1, "furnace": 1, "organic_fuel": 5}
+
+# ── Item Descriptions ────────────────────────────
+ITEM_DESCRIPTIONS = {
+    # Resources
+    "stone": "石料 — 基础建材，可开采获取",
+    "organic_fuel": "有机燃料 — 可作燃料或合成碳",
+    "raw_copper": "铜矿石 — 需在熔炉中冶炼为铜锭",
+    "raw_iron": "铁矿石 — 需在熔炉中冶炼为铁锭",
+    "uranium_ore": "铀矿石 — 高级材料，需标准以上采掘器",
+    "raw_gold": "金矿石 — 需在熔炉中冶炼为金锭",
+    "copper_coin": "铜币 — 基础货币",
+    "iron_coin": "铁币 — 中级货币",
+    "gold_coin": "金币 — 高级货币",
+    "wood": "木材 — 基础建材",
+    "acid_blood": "酸血 — 生物掉落物",
+    "organic_toxin": "有机毒素 — 可制作辐射解毒剂",
+    "organic_fiber": "有机纤维 — 生物掉落物",
+    "wreckage_component": "残骸组件 — 稀有回收材料",
+    # Materials
+    "copper_ingot": "铜锭 — 基础工业材料，用于制作线缆和工具",
+    "iron_ingot": "铁锭 — 核心工业材料，用于制作工具和建筑",
+    "gold_ingot": "金锭 — 高级材料，用于制作高级装备",
+    "carbon": "碳 — 由有机燃料在熔炉中制成，用于合成",
+    "silicon": "硅 — 由石料在熔炉中制成，用于电子设备",
+    "building_block": "建材方块 — 用于建造墙壁和门",
+    "wire": "导线 — 铜锭制成，用于电子设备",
+    "carbon_fiber": "碳纤维 — 高级材料，用于制作高级装备",
+    # Tools
+    "basic_excavator": "基础采掘器 — 可采矿硬度5(铜矿/铁矿)，耐久50",
+    "standard_excavator": "标准采掘器 — 可采矿硬度8(铀矿/金矿)，耐久100",
+    "heavy_excavator": "重型采掘器 — 可采矿硬度10，耐久150",
+    "cutter": "切割器 — 基础近战武器",
+    # Weapons
+    "plasma_cutter_mk1": "等离子切割器I — 近战伤害10，射程1",
+    "plasma_cutter_mk2": "等离子切割器II — 近战伤害15，射程1",
+    "plasma_cutter_mk3": "等离子切割器III — 近战伤害22，射程1",
+    "pulse_emitter_mk1": "脉冲发射器I — 远程伤害8，射程6",
+    "pulse_emitter_mk2": "脉冲发射器II — 远程伤害12，射程8",
+    "pulse_emitter_mk3": "脉冲发射器III — 远程伤害18，射程10",
+    # Armor
+    "radiation_armor": "辐射护甲 — 防御+2，辐射抗性50%",
+    # Accessories
+    "searchlight": "探照灯 — 夜间视野+4",
+    "signal_amplifier": "信号放大器 — 无线电范围扩大到80格",
+    # Consumables
+    "repair_kit": "维修包 — 恢复30HP",
+    "radiation_antidote": "辐射解毒剂 — 治疗辐射debuff",
+    "battery": "电池 — 立即恢复30能量",
+    # Structures (inventory items for deploy)
+    "workbench": "工作台 — 部署后可在旁合成工具和装备",
+    "furnace": "熔炉 — 部署后可在旁冶炼矿石",
+    "wall": "墙壁 — 阻挡移动，提供庇护所防护",
+    "door": "门 — 可开关的通道，关闭时阻挡移动",
+    "power_node": "能源节点 — 可储存电力供附近设备使用",
+}

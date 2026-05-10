@@ -10,6 +10,7 @@ from aiohttp import web
 import aiohttp_cors
 
 from .world import World
+from .models import ActionStatus
 from .ws_handler import WSManager
 from .http_routes import handle_register, handle_status, handle_map_data, handle_agents_list, handle_agent_detail, handle_actions_log, handle_events
 from .db import init_db, save_snapshot, load_latest_snapshot, read_wal_after, truncate_wal
@@ -214,6 +215,19 @@ class GameServer:
             "radiation_debuff": agent.radiation_debuff,
         }
 
+        # Crafting progress
+        if agent.status == ActionStatus.CRAFTING and agent.action_data:
+            recipe_id = agent.action_data.get("recipe", "")
+            recipe_def = agent.action_data.get("recipe_def", {})
+            total_ticks = recipe_def.get("ticks", 0)
+            remaining = agent.action_remaining
+            state_snapshot["crafting"] = {
+                "recipe": recipe_id,
+                "total_ticks": total_ticks,
+                "remaining_ticks": remaining,
+                "progress": f"{total_ticks - remaining}/{total_ticks}" if total_ticks > 0 else "instant",
+            }
+
         return {
             "type": "tick",
             "tick": self.world.tick_number,
@@ -240,7 +254,31 @@ class GameServer:
         lines.append(f"【自身状态】位置:({pos.x},{pos.y}) HP:{agent.health}/{agent.max_health} 能量:{agent.energy} 手持:{held}")
         lines.append(f"  PER:{agent.perception} CON:{agent.constitution} AGI:{agent.agility} | "
                      f"视野:{agent.view_range(world.day_phase, world.weather)}格 移速:{agent.move_speed()}格/tick")
+
+        # Show crafting progress if active
+        if agent.status == ActionStatus.CRAFTING and agent.action_data:
+            recipe_id = agent.action_data.get("recipe", "unknown")
+            remaining = agent.action_remaining
+            recipe_def = agent.action_data.get("recipe_def", {})
+            total = recipe_def.get("ticks", 0)
+            lines.append(f"  合成中: {recipe_id} (进度 {total - remaining}/{total}, 还需{remaining}tick)")
         lines.append(f"  备份机体:{agent.backup_count}")
+
+        # Show drop pod power info
+        if agent.drop_pod_pos and agent.drop_pod_deployed:
+            pod_dist = agent.position.dist(agent.drop_pod_pos)
+            from .config import DROP_POD_SHIELD_RANGE, POWER_CRAFT_COST
+            # Find drop pod power node
+            pod_id = f"pod-{agent.agent_id}"
+            pod_power = world.power_nodes.get(pod_id)
+            if pod_power:
+                power_status = f"电量:{pod_power.stored}/{pod_power.capacity}"
+                if pod_dist <= DROP_POD_SHIELD_RANGE:
+                    lines.append(f"  降落仓电力: {power_status} (你距降落仓{pod_dist}格，在供电范围内，可为工作台/熔炉供电)")
+                else:
+                    lines.append(f"  降落仓电力: {power_status} (距降落仓{pod_dist}格，需在{DROP_POD_SHIELD_RANGE}格内才能使用电力)")
+            else:
+                lines.append(f"  降落仓距你:{pod_dist}格")
 
         # Tutorial guidance with precise JSON action examples
         tp = agent.tutorial_phase
@@ -314,7 +352,7 @@ class GameServer:
                     continue
 
                 # Terrain
-                tnames = {"flat": "平地", "sand": "沙地", "rock": "基岩", "water": "水域", "trench": "沟壑"}
+                tnames = {"flat": "平地", "sand": "沙地", "rock": "基岩(可通行)", "water": "水域", "trench": "沟壑"}
                 if tile.l2_type == 'stone' and tile.stone_amount > 0:
                     ore_label = ""
                     if tile.ore_type and tile.ore_exposed:
@@ -355,7 +393,7 @@ class GameServer:
                 drop_str = ""
                 if "primary" in drops:
                     drop_str = f" 掉落:{drops['primary'][0]}"
-                creatures_seen.append(f"{creature.creature_type}({creature.position.x},{creature.position.y} HP:{creature.hp}/{creature.max_hp}{drop_str})")
+                creatures_seen.append(f"{creature.creature_type}[{creature.creature_id}]({creature.position.x},{creature.position.y} HP:{creature.hp}/{creature.max_hp}{drop_str})")
         if creatures_seen:
             lines.append(f"  生物: {', '.join(creatures_seen)}")
 
@@ -396,9 +434,9 @@ class GameServer:
                         if abs(rx - pos.x) + abs(ry - pos.y) <= 2:
                             nearby_rocks.append(rt)
                 if nearby_rocks:
-                    parts.append(f'基岩: {", ".join(nearby_rocks[:6])}')
+                    parts.append(f'基岩(可通行): {", ".join(nearby_rocks[:6])}')
                 elif rock_tiles:
-                    parts.append(f'基岩×{len(rock_tiles)}')
+                    parts.append(f'基岩(可通行)×{len(rock_tiles)}')
                 if parts: lines.append(f"  地形: {', '.join(parts)}")
         if structures_seen:
             lines.append(f"  建筑: {', '.join(structures_seen)}")

@@ -360,7 +360,8 @@ def _fmt_result(frame: dict) -> str:
             for item in r["items"]:
                 name = item["item_id"]
                 dur = f" 耐久{item['durability']}" if item.get("durability") else ""
-                item_strs.append(f"{name}x{item['amount']}{dur}")
+                desc = f" — {item['desc']}" if item.get("desc") else ""
+                item_strs.append(f"{name}x{item['amount']}{dur}{desc}")
             lines.append(f"  物品: {', '.join(item_strs)}")
 
         if r.get("type") == "inspect" and r.get("recipes"):

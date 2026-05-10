@@ -40,7 +40,10 @@ const VEG_LABELS: Record<string, string> = {
   wallmoss: '壁生苔 (木质×1)', rubble: '碎石堆 (得石料×1)',
 }
 const STRUCT_COLORS: Record<string, string> = {
-  wall: '#777', door: '#964', workbench: '#08f', furnace: '#f80', power_node: '#0ff',
+  wall: '#4a4a5a', door: '#964', workbench: '#08f', furnace: '#f80', power_node: '#0ff',
+}
+const STRUCT_BORDER_COLORS: Record<string, string> = {
+  wall: '#8888aa', door: '#ca8', workbench: '#0af', furnace: '#fa3', power_node: '#0ee',
 }
 const STRUCT_LABELS: Record<string, string> = {
   wall: '墙壁', door: '门', workbench: '工作台', furnace: '熔炉', power_node: '能源节点',
@@ -98,7 +101,13 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent 
           }
           if (tile.structure && STRUCT_COLORS[tile.structure]) {
             ctx.fillStyle = STRUCT_COLORS[tile.structure]
-            ctx.fillRect(px + 1, py + 1, tileSize * 2 - 2, tileSize * 2 - 2)
+            ctx.fillRect(px, py, tileSize * 2, tileSize * 2)
+            const bc = STRUCT_BORDER_COLORS[tile.structure]
+            if (bc) {
+              ctx.strokeStyle = bc
+              ctx.lineWidth = Math.max(0.5, tileSize * 0.1)
+              ctx.strokeRect(px, py, tileSize * 2, tileSize * 2)
+            }
           }
         }
       }
@@ -111,17 +120,26 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent 
         const cpx = ox + px * tileSize
         const cpy = oy + py * tileSize
         const sr = pod.shield_range * tileSize
-        // Shield circle (approximate with square for pixel style)
-        ctx.strokeStyle = 'rgba(0, 212, 170, 0.3)'
-        ctx.lineWidth = 1
-        ctx.strokeRect(cpx - sr, cpy - sr, sr * 2, sr * 2)
-        ctx.fillStyle = 'rgba(0, 212, 170, 0.08)'
-        ctx.fillRect(cpx - sr, cpy - sr, sr * 2, sr * 2)
-        // Drop pod marker
+        // Shield area fill
+        ctx.fillStyle = 'rgba(0, 212, 170, 0.06)'
+        ctx.fillRect(cpx - sr - tileSize, cpy - sr - tileSize, sr * 2 + tileSize * 2, sr * 2 + tileSize * 2)
+        // Shield boundary - draw each edge of the diamond (Manhattan distance)
+        ctx.strokeStyle = 'rgba(0, 212, 170, 0.5)'
+        ctx.lineWidth = Math.max(1, tileSize * 0.3)
+        ctx.setLineDash([tileSize * 0.8, tileSize * 0.4])
+        ctx.strokeRect(cpx - sr - tileSize, cpy - sr - tileSize, sr * 2 + tileSize * 2, sr * 2 + tileSize * 2)
+        ctx.setLineDash([])
+        // "SHIELD" label
+        ctx.fillStyle = 'rgba(0, 212, 170, 0.6)'
+        ctx.font = `${Math.max(7, tileSize * 0.8)}px monospace`
+        ctx.fillText('⬡ 护盾', cpx - sr - tileSize + 2, cpy - sr - tileSize - 2)
+        // Drop pod marker (larger and more visible)
         ctx.fillStyle = '#00d4aa'
-        ctx.fillRect(cpx - tileSize/2, cpy - tileSize/2, tileSize, tileSize)
+        ctx.fillRect(cpx - tileSize * 0.8, cpy - tileSize * 0.8, tileSize * 1.6, tileSize * 1.6)
         ctx.fillStyle = '#0a0e17'
-        ctx.fillRect(cpx - tileSize/3, cpy - tileSize/3, tileSize*2/3, tileSize*2/3)
+        ctx.fillRect(cpx - tileSize * 0.5, cpy - tileSize * 0.5, tileSize, tileSize)
+        ctx.fillStyle = '#00d4aa'
+        ctx.fillRect(cpx - tileSize * 0.25, cpy - tileSize * 0.25, tileSize * 0.5, tileSize * 0.5)
       }
     }
 
@@ -130,13 +148,33 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent 
       for (const s of mapData.structures) {
         const spx = ox + s.x * tileSize
         const spy = oy + s.y * tileSize
-        if (spx + tileSize < 0 || spx > canvas.width || spy + tileSize < 0 || spy > canvas.height) continue
+        if (spx + tileSize * 2 < 0 || spx > canvas.width || spy + tileSize * 2 < 0 || spy > canvas.height) continue
         const sc = STRUCT_COLORS[s.type] || '#fff'
+        const bc = STRUCT_BORDER_COLORS[s.type] || 'rgba(255,255,255,0.3)'
         ctx.fillStyle = sc
         ctx.fillRect(spx, spy, tileSize * 2, tileSize * 2)
-        ctx.strokeStyle = 'rgba(255,255,255,0.3)'
-        ctx.lineWidth = 0.5
-        ctx.strokeRect(spx, spy, tileSize * 2, tileSize * 2)
+        // Wall: draw brick-like pattern for visibility
+        if (s.type === 'wall') {
+          ctx.strokeStyle = bc
+          ctx.lineWidth = Math.max(1, tileSize * 0.15)
+          ctx.strokeRect(spx, spy, tileSize * 2, tileSize * 2)
+          // Horizontal brick line
+          ctx.beginPath()
+          ctx.moveTo(spx, spy + tileSize)
+          ctx.lineTo(spx + tileSize * 2, spy + tileSize)
+          ctx.stroke()
+          // Vertical brick lines (offset)
+          ctx.beginPath()
+          ctx.moveTo(spx + tileSize * 0.5, spy)
+          ctx.lineTo(spx + tileSize * 0.5, spy + tileSize)
+          ctx.moveTo(spx + tileSize * 1.5, spy + tileSize)
+          ctx.lineTo(spx + tileSize * 1.5, spy + tileSize * 2)
+          ctx.stroke()
+        } else {
+          ctx.strokeStyle = bc
+          ctx.lineWidth = Math.max(0.5, tileSize * 0.1)
+          ctx.strokeRect(spx, spy, tileSize * 2, tileSize * 2)
+        }
       }
     }
 

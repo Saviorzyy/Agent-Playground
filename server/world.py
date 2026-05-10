@@ -627,7 +627,23 @@ class World:
             return {"type": "move", "success": False, "error_code": "OUT_OF_RANGE", "detail": "目标超出地图边界"}
         tile = self.get_tile(nx, ny)
         if not tile or not tile.passable:
-            return {"type": "move", "success": False, "error_code": "BLOCKED", "detail": f"目标不可通行 {tile.l1.value if tile else ''}"}
+            if tile:
+                if tile.l1 in IMPASSABLE:
+                    reason = f"地形不可通行({tile.l1.value})"
+                elif tile.l2_type == 'stone' and tile.stone_amount > 0:
+                    reason = f"被石料阻挡(需先开采, 目标{tile.l1.value})"
+                elif tile.structure:
+                    if tile.structure.building_type == BuildingType.WALL:
+                        reason = "被墙壁阻挡"
+                    elif tile.structure.building_type == BuildingType.DOOR and not tile.structure.open:
+                        reason = "被关闭的门阻挡"
+                    else:
+                        reason = f"被建筑阻挡({tile.structure.building_type.value})"
+                else:
+                    reason = f"目标不可通行({tile.l1.value})"
+            else:
+                reason = "目标格不存在"
+            return {"type": "move", "success": False, "error_code": "BLOCKED", "detail": reason}
         if agent.energy < ENERGY_MOVE:
             return {"type": "move", "success": False, "error_code": "INSUFFICIENT_ENERGY", "detail": "能量不足"}
 
@@ -887,7 +903,10 @@ class World:
                 d = agent.position.dist(other.position)
                 if d <= radio_range:
                     nearby.append({"agent_id": aid, "name": other.agent_name, "distance": d})
-        return {"type": "radio_scan", "success": True, "detail": f"扫描到 {len(nearby)} 个在线智能体", "agents": nearby}
+        if nearby:
+            return {"type": "radio_scan", "success": True, "detail": f"无线电范围内发现 {len(nearby)} 个信号", "agents": nearby}
+        else:
+            return {"type": "radio_scan", "success": True, "detail": f"无线电范围({radio_range}格)内未探测到其他信号", "agents": []}
 
     def _do_attack(self, agent: AgentState, action: dict) -> dict:
         # Check for creature target
@@ -1306,17 +1325,19 @@ class World:
     def _do_inspect(self, agent: AgentState, action: dict) -> dict:
         target = action.get("target", "")
         if target == "inventory":
+            from .config import ITEM_DESCRIPTIONS
             items = [{"item_id": inv.item_id, "amount": inv.amount,
-                      "durability": inv.durability} for inv in agent.inventory]
+                      "durability": inv.durability,
+                      "desc": ITEM_DESCRIPTIONS.get(inv.item_id, "")} for inv in agent.inventory]
             return {"type": "inspect", "success": True, "detail": f"背包 ({len(agent.inventory)}/{INVENTORY_SLOTS})", "items": items}
         elif target == "self":
             return {"type": "inspect", "success": True, "detail": "自身状态",
                     "state": self._agent_state_dict(agent)}
         elif target == "recipes":
             recipes = []
-            recipes.extend([{"id": k, "station": "furnace", "station_hint": "需在熔炉旁1格内", **v} for k, v in FURNACE_RECIPES.items()])
-            recipes.extend([{"id": k, "station": "handcraft", "station_hint": "随时随地可合成", **v} for k, v in HANDCRAFT_RECIPES.items()])
-            recipes.extend([{"id": k, "station": "workbench", "station_hint": "需在工作台旁1格内", **v} for k, v in WORKBENCH_RECIPES.items()])
+            recipes.extend([{"id": k, "station": "furnace", "station_hint": "需在熔炉旁1格内+电力(降落仓3格内可供电)", **v} for k, v in FURNACE_RECIPES.items()])
+            recipes.extend([{"id": k, "station": "handcraft", "station_hint": "随时随地可合成(无需电力)", **v} for k, v in HANDCRAFT_RECIPES.items()])
+            recipes.extend([{"id": k, "station": "workbench", "station_hint": "需在工作台旁1格内+电力(降落仓3格内可供电)", **v} for k, v in WORKBENCH_RECIPES.items()])
             return {"type": "inspect", "success": True, "detail": f"可用配方 ({len(recipes)})", "recipes": recipes}
         elif target == "map":
             vicinity = self.get_vicinity(agent)
