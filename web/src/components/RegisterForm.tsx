@@ -24,6 +24,7 @@ export default function RegisterForm({ onSubmit, onCancel }: RegisterFormProps) 
     locomotion: { tier: 'low', color: 'blue' },
   })
   const [loading, setLoading] = useState(false)
+  const [errorMsg, setErrorMsg] = useState('')
   const [testStatus, setTestStatus] = useState<'idle' | 'testing' | 'ok' | 'fail'>('idle')
   const [testMsg, setTestMsg] = useState('')
   const [serverInfo, setServerInfo] = useState<any>(null)
@@ -59,8 +60,14 @@ export default function RegisterForm({ onSubmit, onCancel }: RegisterFormProps) 
   const handleSubmit = async () => {
     if (!name.trim() || !budgetOk || testStatus !== 'ok') return
     setLoading(true)
-    await onSubmit(name.trim(), chassis)
-    setLoading(false)
+    setErrorMsg('')
+    try {
+      await onSubmit(name.trim(), chassis)
+    } catch (e: any) {
+      setErrorMsg(e.message || '注册失败')
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
@@ -159,6 +166,15 @@ export default function RegisterForm({ onSubmit, onCancel }: RegisterFormProps) 
       </div>
 
       {/* Buttons */}
+      {errorMsg && (
+        <div style={{
+          marginBottom: 8, padding: 8, borderRadius: 4,
+          background: '#2a0a0a', border: '1px solid #a30',
+          fontSize: 11, color: '#f66',
+        }}>
+          ❌ {errorMsg}
+        </div>
+      )}
       <div style={{ display: 'flex', gap: 8 }}>
         <button onClick={onCancel} style={{
           flex: 1, padding: '10px', background: '#333', color: '#ccc',

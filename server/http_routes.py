@@ -1,8 +1,10 @@
 """Ember Protocol — HTTP API Routes"""
 from __future__ import annotations
+import functools
 from aiohttp import web
 from .world import World
 from .auth import register_agent
+from .models import hash_token, generate_token
 import json
 import time
 
@@ -22,6 +24,38 @@ def _check_rate_limit(ip: str, max_attempts: int = 5, window: float = 60.0) -> b
         return False
     attempts.append(now)
     return True
+
+
+# ── Auth Decorator ───────────────────────────────
+
+
+def auth_required(handler):
+    """Decorator that validates ``Authorization: Bearer <token>``.
+
+    On success sets ``request.agent_id`` and calls the wrapped handler.
+    On failure returns 401 JSON.
+    """
+    @functools.wraps(handler)
+    async def wrapper(request: web.Request) -> web.Response:
+        world: World = request.app["world"]
+        auth = request.headers.get("Authorization", "")
+        if not auth.startswith("Bearer "):
+            return web.json_response(
+                {"error": "缺少认证 Token", "code": "AUTH_REQUIRED"},
+                status=401,
+            )
+        token = auth[7:]
+        th = hash_token(token)
+        for aid, stored_hash in world.token_hashes.items():
+            if stored_hash == th:
+                setattr(request, "agent_id", aid)
+                return await handler(request)
+        return web.json_response(
+            {"error": "Token 无效或已过期", "code": "TOKEN_INVALID"},
+            status=401,
+        )
+
+    return wrapper
 
 
 async def handle_register(request: web.Request) -> web.Response:
@@ -85,6 +119,7 @@ async def handle_status(request: web.Request) -> web.Response:
     })
 
 
+@auth_required
 async def handle_map_data(request: web.Request) -> web.Response:
     """GET /api/v1/map — Returns map tile data for rendering (includes structures)."""
     world: World = request.app["world"]
@@ -92,9 +127,9 @@ async def handle_map_data(request: web.Request) -> web.Response:
     structures = []
     drop_pods = []
 
-    for y in range(0, 200, 2):
+    for y in range(0, 200):
         row = []
-        for x in range(0, 200, 2):
+        for x in range(0, 200):
             tile = world.get_tile(x, y)
             if tile:
                 row.append({
@@ -142,13 +177,14 @@ async def handle_map_data(request: web.Request) -> web.Response:
         })
 
     return web.json_response({
-        "tiles": tiles, "width": 100, "height": 100,
+        "tiles": tiles, "width": 200, "height": 200,
         "structures": structures,
         "drop_pods": drop_pods,
         "creatures": creatures_list,
     })
 
 
+@auth_required
 async def handle_agents_list(request: web.Request) -> web.Response:
     """GET /api/v1/agents — List all agents with full details."""
     world: World = request.app["world"]
@@ -183,6 +219,7 @@ async def handle_agents_list(request: web.Request) -> web.Response:
     return web.json_response({"agents": agents})
 
 
+@auth_required
 async def handle_agent_detail(request: web.Request) -> web.Response:
     """GET /api/v1/agents/{agent_id} — Get single agent details."""
     world: World = request.app["world"]
@@ -235,3 +272,56 @@ async def handle_events(request: web.Request) -> web.Response:
     count = int(request.query.get("count", "50"))
     events = world.get_recent_events(count)
     return web.json_response({"events": events})
+
+
+@auth_required
+async def handle_rotate_token(request: web.Request) -> web.Response:
+    """POST /api/v1/auth/rotate-token
+
+    Requires old token in ``Authorization: Bearer <token>`` header.
+    Body must include ``agent_id`` (must match the token's owner).
+    Returns the new token; the old one is immediately invalidated.
+    """
+    world: World = request.app["world"]
+    agent_id_from_token = getattr(request, "agent_id", None)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "无效的 JSON"}, status=400)
+
+    agent_id = body.get("agent_id", "")
+
+    if not agent_id:
+        return web.json_response({"error": "需要 agent_id"}, status=400)
+
+    if agent_id != agent_id_from_token:
+        return web.json_response(
+            {"error": "Token 不属于该智能体"}, status=403
+        )
+
+    if agent_id not in world.agents:
+        return web.json_response({"error": "智能体不存在"}, status=404)
+
+    # Generate new token and update hash
+    new_token = generate_token()
+    new_hash = hash_token(new_token)
+
+    world.token_hashes[agent_id] = new_hash
+
+    # Persist to database
+    from .db import get_conn
+    conn = get_conn()
+    conn.execute(
+        "UPDATE agents SET token_hash = ? WHERE agent_id = ?",
+        (new_hash, agent_id),
+    )
+    conn.commit()
+    conn.close()
+
+    return web.json_response({
+        "agent_id": agent_id,
+        "game_token": new_token,
+        "connection_url": "ws://localhost:8765/ws/game",
+        "message": "Token 轮换成功，旧 token 已失效",
+    })

@@ -67,6 +67,7 @@ HP_DROP_POD_REPAIR = 50
 
 # ── Power Node ───────────────────────────────────
 POWER_NODE_CAPACITY = 100
+POWER_NODE_MAX_ENERGY = 200
 POWER_NODE_RANGE = 3
 POWER_CRAFT_COST = 5
 POWER_FUEL_ORGANIC = 10
@@ -79,6 +80,7 @@ DROP_POD_EMERGENCY_RECOVER = 5
 DROP_POD_EMERGENCY_MIN = 10
 DEPLOY_DISMANTLE_TICKS = 4
 RESPAWN_TICKS = 5
+POD_PARTS = ["pod_part_1", "pod_part_2", "pod_part_3", "pod_part_4", "pod_part_5"]
 
 # ── Building ─────────────────────────────────────
 BUILDING_HP = {
@@ -164,6 +166,9 @@ RESOURCES = {
     "gold_coin": {"stack": 64}, "wood": {"stack": 64},
     "acid_blood": {"stack": 32}, "organic_toxin": {"stack": 32},
     "organic_fiber": {"stack": 32}, "wreckage_component": {"stack": 1},
+    "pod_part_1": {"stack": 1}, "pod_part_2": {"stack": 1},
+    "pod_part_3": {"stack": 1}, "pod_part_4": {"stack": 1},
+    "pod_part_5": {"stack": 1},
 }
 # ② Materials
 MATERIALS = {
@@ -255,6 +260,12 @@ BUILD_COSTS = {
     "power_node": {"iron_ingot": 3, "copper_ingot": 2, "building_block": 1},
 }
 
+# ── Vegetation / Wood Regrowth ───────────────────
+TREE_WOOD_AMOUNT = 5       # default wood yield when a tree regrows
+TREE_REGROW_TICKS = 600    # ticks needed for regrowth (P2)
+TREE_REGROW_RANGE = 3      # manhattan distance to check for living wood (P2)
+WOOD_VEG_TYPES = ('ashbush', 'greytree', 'wallmoss')
+
 # ── Creatures ────────────────────────────────────
 CREATURES = {
     "ash_crawler": {"hp": 20, "attack": 3, "range": 1, "speed": 1, "behavior": "passive", "aggro_range": 0, "habitat": ["flat", "sand"]},
@@ -304,6 +315,11 @@ ITEM_DESCRIPTIONS = {
     "organic_toxin": "有机毒素 — 可制作辐射解毒剂",
     "organic_fiber": "有机纤维 — 生物掉落物",
     "wreckage_component": "残骸组件 — 稀有回收材料",
+    "pod_part_1": "降落仓组件 #1 — 收集全部5个可在合适位置重新部署",
+    "pod_part_2": "降落仓组件 #2 — 收集全部5个可在合适位置重新部署",
+    "pod_part_3": "降落仓组件 #3 — 收集全部5个可在合适位置重新部署",
+    "pod_part_4": "降落仓组件 #4 — 收集全部5个可在合适位置重新部署",
+    "pod_part_5": "降落仓组件 #5 — 收集全部5个可在合适位置重新部署",
     # Materials
     "copper_ingot": "铜锭 — 基础工业材料，用于制作线缆和工具",
     "iron_ingot": "铁锭 — 核心工业材料，用于制作工具和建筑",

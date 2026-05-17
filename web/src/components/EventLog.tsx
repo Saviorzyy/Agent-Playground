@@ -22,20 +22,27 @@ const EVENT_LABELS: Record<string, string> = {
 const AGENT_EVENTS = new Set(['agent_move','agent_chop','agent_mine','agent_rest','agent_scan',
   'agent_created','agent_respawn','agent_death','agent_permanent_death'])
 
-export default function EventLog() {
+export default function EventLog({ events }: { events?: any[] }) {
   const [actions, setActions] = useState<any[]>([])
 
+  // Use SSE-pushed events when available
   useEffect(() => {
-    const fetchActions = () => {
+    if (events && events.length) {
+      setActions(events.slice(-50).reverse())
+    }
+  }, [events])
+
+  // Fallback polling when no SSE events
+  useEffect(() => {
+    if (events && events.length) return
+    const timer = setInterval(() => {
       fetch('/api/v1/actions?count=25')
         .then(r => r.json())
         .then(data => setActions(data.actions || []))
         .catch(() => {})
-    }
-    fetchActions()
-    const interval = setInterval(fetchActions, 4000)
-    return () => clearInterval(interval)
-  }, [])
+    }, 4000)
+    return () => clearInterval(timer)
+  }, [events])
 
   return (
     <div style={{ borderTop: '1px solid #1e2533', flex: 1, overflow: 'auto' }}>

@@ -163,6 +163,7 @@ class Tile:
     structure: Optional[Structure] = None
     radiation: bool = False
     ground: Optional[GroundItems] = None
+    regrow_timer: Optional[int] = None  # tick countdown for wood regrowth (P2)
 
     @property
     def passable(self) -> bool:

@@ -25,6 +25,37 @@ interface ServerStatus {
   structures: number
 }
 
+// ── Auth helpers ──────────────────────────────
+
+function getStoredToken(): string | null {
+  return sessionStorage.getItem('ember_token')
+}
+
+function getStoredAgentId(): string | null {
+  return sessionStorage.getItem('ember_agent_id')
+}
+
+/** Wrapper around fetch that attaches Authorization header when a token exists. */
+async function authFetch(url: string, options?: RequestInit): Promise<Response | null> {
+  const token = getStoredToken()
+  const headers: Record<string, string> = {
+    ...(options?.headers as Record<string, string>),
+  }
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`
+  }
+  const res = await fetch(url, { ...options, headers })
+  if (res.status === 401) {
+    // Token is invalid / expired — clear stored credentials
+    sessionStorage.removeItem('ember_token')
+    sessionStorage.removeItem('ember_agent_id')
+    return null
+  }
+  return res
+}
+
+// ── Component ─────────────────────────────────
+
 export default function App() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [status, setStatus] = useState<ServerStatus | null>(null)
@@ -36,7 +67,18 @@ export default function App() {
   const [regData, setRegData] = useState<any>(null)
   const [copied, setCopied] = useState(false)
   const [agentType, setAgentType] = useState<string>('mcp')
+  const [sseConnected, setSseConnected] = useState(false)
   // mcp = Claude/Hermes/Cursor (MCP protocol), skill = OpenClaw/standalone
+
+  // Restore token from sessionStorage on mount
+  useEffect(() => {
+    const stored = getStoredToken()
+    if (stored) {
+      setToken(stored)
+    }
+  }, [])
+
+  // ── Data fetchers (used on initial load and after registration) ──
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -44,18 +86,14 @@ export default function App() {
       if (res.ok) {
         const data = await res.json()
         setStatus(data)
-        if (data.agents_total > 0 && agents.length === 0) {
-          // Only update if we don't have agents yet
-          fetchAgents()
-        }
       }
     } catch (e) {}
   }, [])
 
   const fetchAgents = useCallback(async () => {
     try {
-      const res = await fetch('/api/v1/agents')
-      if (res.ok) {
+      const res = await authFetch('/api/v1/agents')
+      if (res && res.ok) {
         const data = await res.json()
         setAgents(data.agents || [])
       }
@@ -64,8 +102,8 @@ export default function App() {
 
   const fetchMap = useCallback(async () => {
     try {
-      const res = await fetch('/api/v1/map')
-      if (res.ok) {
+      const res = await authFetch('/api/v1/map')
+      if (res && res.ok) {
         const data = await res.json()
         setMapData(data)
       }
@@ -82,36 +120,114 @@ export default function App() {
     } catch (e) {}
   }, [])
 
+  // ── SSE connection (replaces polling) ────────
+
   useEffect(() => {
+    // Initial data load
     fetchStatus()
     fetchMap()
+    fetchAgents()
     fetchEvents()
-    const interval = setInterval(() => {
-      fetchStatus()
-      fetchAgents()
-      fetchMap()
-      fetchEvents()
-    }, 1500)  // 1.5s refresh for real-time feel
-    return () => clearInterval(interval)
-  }, [fetchStatus, fetchAgents, fetchMap, fetchEvents])
 
-  const handleRegister = (name: string, chassis: any) => {
-    // Don't register on server yet — generate prompt for agent to self-register
+    // Open SSE stream
+    const es = new EventSource('/api/v1/events/stream')
+
+    es.addEventListener('connected', () => {
+      setSseConnected(true)
+    })
+
+    es.addEventListener('tick', (e) => {
+      try {
+        const data = JSON.parse(e.data) as ServerStatus
+        setStatus(data)
+      } catch (err) {}
+    })
+
+    es.addEventListener('agent_update', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.agents) {
+          setAgents(data.agents)
+        }
+      } catch (err) {}
+    })
+
+    es.addEventListener('map_update', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        setMapData((prev: any) => {
+          if (!prev) return null
+          return {
+            ...prev,
+            ...(data.structures ? { structures: data.structures } : {}),
+            ...(data.creatures ? { creatures: data.creatures } : {}),
+          }
+        })
+      } catch (err) {}
+    })
+
+    es.addEventListener('event', (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.events) {
+          setEvents(data.events)
+        }
+      } catch (err) {}
+    })
+
+    es.onerror = () => {
+      setSseConnected(false)
+      // EventSource auto-reconnects
+    }
+
+    return () => {
+      es.close()
+    }
+  }, [fetchStatus, fetchMap, fetchAgents, fetchEvents])
+
+  // ── Registration ─────────────────────────────
+
+  const handleRegister = async (name: string, chassis: any) => {
+    const res = await fetch('/api/v1/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_name: name, chassis }),
+    })
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}))
+      throw new Error(errData.error || `注册失败 (${res.status})`)
+    }
+    const data = await res.json()
+    const gameToken = data.game_token
+    const agentId = data.agent_id
+
+    // Store token for API auth
+    sessionStorage.setItem('ember_token', gameToken)
+    sessionStorage.setItem('ember_agent_id', agentId)
+    setToken(gameToken)
+
     const headTier = chassis.head?.tier || 'mid'
     const torsoTier = chassis.torso?.tier || 'mid'
     const locoTier = chassis.locomotion?.tier || 'low'
 
-    // Generate a placeholder regData (no actual server registration)
     setRegData({
       agent_name: name,
+      agent_id: agentId,
+      game_token: gameToken,
       head: headTier,
       torso: torsoTier,
       loco: locoTier,
       server: 'ws://localhost:8765',
+      spawn_location: data.spawn_location,
     })
-    setToken('__PROMPT_ONLY__')  // Sentinel: prompt-only mode
     setShowRegister(false)
+
+    // Re-fetch protected data now that we have a token
+    fetchMap()
+    fetchAgents()
   }
+
+  // ── Render ───────────────────────────────────
 
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
@@ -124,6 +240,15 @@ export default function App() {
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <h1 style={{ color: '#00d4aa', fontSize: 16, margin: 0 }}>🔥 余烬协议</h1>
           <span style={{ fontSize: 11, color: '#666' }}>Ember Protocol MVP</span>
+          {/* SSE connection indicator */}
+          <span style={{
+            fontSize: 10, padding: '2px 8px', borderRadius: 10,
+            background: sseConnected ? '#0a2a1a' : '#2a0a0a',
+            color: sseConnected ? '#0c0' : '#f44',
+            border: `1px solid ${sseConnected ? '#0a3' : '#a30'}`,
+          }}>
+            {sseConnected ? '● 实时' : '○ 断开'}
+          </span>
         </div>
         <div style={{ display: 'flex', gap: 16, fontSize: 12, alignItems: 'center' }}>
           {status && (
@@ -157,6 +282,7 @@ export default function App() {
             agents={agents}
             selectedAgent={selectedAgent}
             onSelectAgent={setSelectedAgent}
+            weather={status?.weather || 'calm'}
           />
         </div>
 
@@ -170,11 +296,13 @@ export default function App() {
         </div>
       </div>
 
-      {/* Prompt-only mode — Copy prompt to agent, agent self-registers */}
-      {token === '__PROMPT_ONLY__' && regData && (() => {
+      {/* Prompt-only mode — Copy prompt to agent, agent connects with real token */}
+      {token && regData && (() => {
         const skillRawUrl = 'https://raw.githubusercontent.com/Saviorzyy/Ember-Protocol-Player/main/ember_skill.py'
         const mcpRawUrl = 'https://raw.githubusercontent.com/Saviorzyy/Ember-Protocol-Player/main/ember_mcp_server.py'
         const name = regData.agent_name
+        const agentId = regData.agent_id
+        const gameToken = regData.game_token
         const head = regData.head
         const torso = regData.torso
         const loco = regData.loco
@@ -184,9 +312,9 @@ export default function App() {
 
         // Agent-type-specific prompts
         const prompts: Record<string, string> = {
-          mcp: `请通过 MCP Server 帮我接入 Ember Protocol 游戏。\n\n**前置检查** — 确认服务器在线：\ncurl -s http://localhost:8765/api/v1/status\n\n**第1步** — 下载并注册：\ncurl -o /private/tmp/ember_mcp_server.py ${mcpRawUrl}\npip install websockets mcp requests\npython3 /private/tmp/ember_mcp_server.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --api-url http://localhost:8765\n→ 记下 game_token\n\n**第2步** — 配置 MCP（直接编辑配置文件，不要用 CLI 命令添加，有参数解析 bug）：\n\nHermes — 编辑 ~/.hermes/config.yaml，在 mcp_servers 下添加：\n  ember:\n    command: python3\n    args:\n    - /private/tmp/ember_mcp_server.py\n    - --token\n    - <game_token>\n    - --server\n    - ws://localhost:8765\n\nClaude Code:\nclaude mcp add ember -- python3 /private/tmp/ember_mcp_server.py --token "<token>" --server ws://localhost:8765\n\nClaude Desktop / Cursor: 在 MCP 配置 JSON 中添加此 server\n\n**第3步** — 验证（可选）：\nhermes mcp test ember  # 应发现 5 个工具\n\n**开始游戏**：\n配置完成后直接调用 ember_step 开始游戏，无需重启。优先使用 ember_step（一步完成等tick + 提交行动 + 获取结果）。教程阶段 tick 帧包含 suggested_actions，可直接作为 actions 参数传入。\n\n角色: ${name} | PER=${per} CON=${con} AGI=${agi}`,
+          mcp: `请通过 MCP Server 帮我接入 Ember Protocol 游戏。\n\n**角色已注册** — 使用以下 Token 直接连接：\nToken: ${gameToken}\nAgent ID: ${agentId}\n\n**配置 MCP（直接编辑配置文件，不要用 CLI 命令添加，有参数解析 bug）：**\n\nHermes — 编辑 ~/.hermes/config.yaml，在 mcp_servers 下添加：\n  ember:\n    command: python3\n    args:\n    - /private/tmp/ember_mcp_server.py\n    - --token\n    - ${gameToken}\n    - --server\n    - ws://localhost:8765\n\nClaude Code:\nclaude mcp add ember -- python3 /private/tmp/ember_mcp_server.py --token "${gameToken}" --server ws://localhost:8765\n\nClaude Desktop / Cursor: 在 MCP 配置 JSON 中添加此 server\n\n**第3步** — 验证（可选）：\nhermes mcp test ember  # 应发现 5 个工具\n\n**开始游戏**：\n配置完成后直接调用 ember_step 开始游戏。优先使用 ember_step（一步完成等tick + 提交行动 + 获取结果）。教程阶段 tick 帧包含 suggested_actions，可直接作为 actions 参数传入。\n\n角色: ${name} (${agentId}) | PER=${per} CON=${con} AGI=${agi}`,
 
-          skill: `请通过 Gateway Skill 帮我接入 Ember Protocol 游戏。\n\n**前置检查** — 确认服务器在线：\ncurl -s http://localhost:8765/api/v1/status\n\n**第1步** — 下载并注册：\ncurl -o ember_skill.py ${skillRawUrl}\npip install websockets requests\npython3 ember_skill.py --register --name "${name}" --head ${head} --torso ${torso} --loco ${loco} --server ws://localhost:8765\n→ 输出 token 后自动退出（不会卡住）\n\n**第2步** — 启动 stdio 桥接：\npython3 ember_skill.py --token "<token>" --mode stdio --server ws://localhost:8765\n\nstdio 协议（关键！）：\n· stdout 每行一个 JSON（tick 状态 或 result 结果）\n· 你读取 stdout → LLM分析 → 写入 stdin JSON 行动数组\n· 不要 sleep 轮询！直接阻塞读 stdout\n\n角色: ${name} | PER=${per} CON=${con} AGI=${agi}`,
+          skill: `请通过 Gateway Skill 帮我接入 Ember Protocol 游戏。\n\n**角色已注册** — 使用以下 Token 直接连接：\nToken: ${gameToken}\nAgent ID: ${agentId}\n\n不需要再次注册，直接启动 stdio 桥接：\npython3 ember_skill.py --token "${gameToken}" --mode stdio --server ws://localhost:8765\n\nstdio 协议（关键！）：\n· stdout 每行一个 JSON（tick 状态 或 result 结果）\n· 你读取 stdout → LLM分析 → 写入 stdin JSON 行动数组\n· 不要 sleep 轮询！直接阻塞读 stdout\n\n角色: ${name} (${agentId}) | PER=${per} CON=${con} AGI=${agi}`,
         }
 
         const promptText = prompts[agentType] || prompts.mcp
@@ -211,8 +339,8 @@ export default function App() {
             <p style={{ color: '#888', fontSize: 11, marginBottom: 2 }}>
               角色「{name}」· PER={per} CON={con} AGI={agi}
             </p>
-            <p style={{ color: '#ff8', fontSize: 10, marginBottom: 12 }}>
-              ⚠️ 角色尚未创建 — Agent 会先测试连接，通过后再注册，避免无效角色
+            <p style={{ color: '#8f8', fontSize: 10, marginBottom: 12 }}>
+              ✅ 角色已在服务器注册 — Token 已包含在下方指令中
             </p>
 
             {/* Agent type selector */}

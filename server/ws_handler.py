@@ -139,6 +139,11 @@ class WSManager:
             if tick is None:
                 await queue.put({"type": "error", "error_code": "MALFORMED_ACTIONS", "detail": "actions 帧缺少必填字段 tick"})
                 return
+            # PRD §6.4: STALE_TICK — reject actions from a past tick
+            if tick < self.world.tick_number:
+                await queue.put({"type": "error", "error_code": "STALE_TICK",
+                                 "detail": f"收到的 tick {tick} 已过期，当前世界 tick {self.world.tick_number}"})
+                return
             # Settle actions immediately
             agent = self.world.agents.get(agent_id)
             if agent and not agent.is_dead():

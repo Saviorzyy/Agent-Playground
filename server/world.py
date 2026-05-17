@@ -58,6 +58,9 @@ class World:
         self._next_creature_id = 0
         self._next_enclosure_id = 0
 
+        # Track harvested wood tiles for regrowth (P2): pos -> original_veg_type
+        self._harvested_wood: dict[tuple[int, int], str] = {}
+
     def _generate_world(self):
         """Generate terrain using the terrain generator."""
         result = generate_terrain(self.seed)
@@ -460,7 +463,10 @@ class World:
     # ── Vicinity / View ───────────────────────────
     def get_vicinity(self, agent: AgentState) -> list[dict]:
         """Get visible tiles and entities for an agent."""
-        view_range = agent.view_range(self.day_phase, self.weather)
+        # P2: Sand terrain gives +1 vision range
+        tile = self.get_tile(agent.position.x, agent.position.y)
+        terrain_bonus = 1 if tile and tile.l1 == Terrain.SAND else 0
+        view_range = agent.view_range(self.day_phase, self.weather, terrain_bonus)
         px, py = agent.position.x, agent.position.y
         items = []
 
@@ -556,8 +562,10 @@ class World:
 
         # Priority order: equip/drop/radio → move → attack → mine/chop/pickup → craft/build/use → rest/scan/inspect
         priority_order = ['equip', 'unequip', 'drop', 'radio_broadcast', 'radio_direct', 'radio_scan',
-                          'move', 'move_to', 'attack', 'mine', 'chop', 'pickup',
-                          'craft', 'build', 'dismantle', 'repair', 'use',
+                          'move', 'move_to', 'toggle_door',
+                          'attack', 'mine', 'chop', 'pickup',
+                          'craft', 'build', 'dismantle', 'dismantle_pod', 'deploy_pod', 'repair', 'use',
+                          'fuel_power_node',
                           'rest', 'scan', 'inspect', 'talk', 'logout']
 
         def _priority(action_type: str) -> int:
@@ -587,6 +595,8 @@ class World:
 
         all_actions.sort(key=lambda x: _priority(x[2].get("type", "")))
 
+        moved_agents: set[str] = set()  # agents who already moved this tick
+
         for agent_id, action_index, action in all_actions:
             agent = self.agents.get(agent_id)
             if not agent or agent.is_dead():
@@ -596,9 +606,22 @@ class World:
                 })
                 continue
 
+            atype = action.get("type", "")
+            # Only one successful move per tick per agent — prevents jitter from conflicting moves
+            if atype in ("move", "move_to") and agent_id in moved_agents:
+                all_results[agent_id].append({
+                    "action_index": action_index, "type": atype,
+                    "success": False, "error_code": "ALREADY_MOVED",
+                    "detail": "本tick已移动，忽略额外移动指令"
+                })
+                continue
+
             result = self._settle_action(agent, action)
             result["action_index"] = action_index
             all_results[agent_id].append(result)
+
+            if atype in ("move", "move_to") and result.get("success"):
+                moved_agents.add(agent_id)
 
         return dict(all_results)
 
@@ -622,6 +645,11 @@ class World:
         dx, dy = dirs.get(direction, (0, 0))
         if dx == 0 and dy == 0:
             return {"type": "move", "success": False, "error_code": "INVALID_TARGET", "detail": "无效方向"}
+
+        # Cancel pod deploy/dismantle on move
+        if agent.status in (ActionStatus.DISMANTLING, ActionStatus.DEPLOYING):
+            self._cancel_pod_action(agent)
+
         nx, ny = agent.position.x + dx, agent.position.y + dy
         if not self.in_bounds(nx, ny):
             return {"type": "move", "success": False, "error_code": "OUT_OF_RANGE", "detail": "目标超出地图边界"}
@@ -670,6 +698,22 @@ class World:
         agent.action_remaining = -1  # indefinite
         return {"type": "move_to", "success": True, "detail": f"开始前往 ({tx}, {ty})"}
 
+    def _do_toggle_door(self, agent: AgentState, action: dict) -> dict:
+        """Toggle a door open/closed. Free action — no energy cost."""
+        target = action.get("target", {})
+        tx, ty = target.get("x", -1), target.get("y", -1)
+        if not self.in_bounds(tx, ty):
+            return {"type": "toggle_door", "success": False, "error_code": "INVALID_TARGET", "detail": "目标坐标无效"}
+        if agent.position.dist(Position(tx, ty)) > 0:
+            return {"type": "toggle_door", "success": False, "error_code": "OUT_OF_RANGE", "detail": "需站在门所在格"}
+        tile = self.get_tile(tx, ty)
+        if not tile or not tile.structure or tile.structure.building_type != BuildingType.DOOR:
+            return {"type": "toggle_door", "success": False, "error_code": "STRUCTURE_NOT_FOUND", "detail": "该格无门"}
+
+        tile.structure.open = not tile.structure.open
+        state = "开启" if tile.structure.open else "关闭"
+        return {"type": "toggle_door", "success": True, "detail": f"门已{state}"}
+
     def _do_mine(self, agent: AgentState, action: dict) -> dict:
         target = action.get("target", {})
         tx, ty = target.get("x", -1), target.get("y", -1)
@@ -714,9 +758,12 @@ class World:
         agent.energy -= ENERGY_MINE
         agent.last_action_tick = self.tick_number
 
+        # Harvest efficiency formula: output = base_output × (1 + tool_bonus) × con_modifier
+        con_modifier = {1: 1.0, 2: 1.2, 3: 1.5}.get(agent.constitution, 1.0)
+
         # Mine Stone
         tile.stone_amount -= 1
-        amount = 1
+        amount = max(1, int(1 * (1 + bonus) * con_modifier))
         self.add_item(agent, "stone", amount)
 
         result_detail = f"采集石料×{amount}"
@@ -725,9 +772,10 @@ class World:
         # Mine ore if present
         if tile.ore_type and tile.ore_amount > 0:
             tile.ore_amount -= 1
-            self.add_item(agent, tile.ore_type, 1)
+            ore_amount = max(1, int(1 * (1 + bonus) * con_modifier))
+            self.add_item(agent, tile.ore_type, ore_amount)
             ore_result = tile.ore_type
-            result_detail += f", {self._ore_name(tile.ore_type)}矿×1"
+            result_detail += f", {self._ore_name(tile.ore_type)}矿×{ore_amount}"
 
         # Stone depleted?
         if tile.stone_amount <= 0:
@@ -770,10 +818,18 @@ class World:
         veg = tile.veg_type
         if veg in ("ashbush", "greytree", "wallmoss"):
             wood_yield = tile.veg_yield
-            # Tool bonus
-            held = agent.equipment.main_hand
-            if held == "cutter":
-                wood_yield = int(wood_yield * 1.5) + 1
+            # Harvest efficiency formula: output = base_yield × (1 + tool_bonus) × con_modifier
+            held_tool = self.get_held_tool(agent)
+            tool_info = TOOLS.get(held_tool, {}) if held_tool else None
+            chop_bonus = tool_info["bonus"] if tool_info else TOOL_BONUS.get(None, 0.0)
+            con_modifier = {1: 1.0, 2: 1.2, 3: 1.5}.get(agent.constitution, 1.0)
+            wood_yield = max(1, int(wood_yield * (1 + chop_bonus) * con_modifier))
+
+            # Track for regrowth (P2): wood-yielding vegetation
+            from .config import WOOD_VEG_TYPES
+            if veg in WOOD_VEG_TYPES:
+                self._harvested_wood[(tx, ty)] = veg
+                tile.regrow_timer = 0
 
             tile.veg_type = ''
             tile.veg_yield = 0
@@ -781,16 +837,26 @@ class World:
             self.add_item(agent, "wood", wood_yield)
             self._log_event("agent_chop", {"agent_id": agent.agent_id, "position": [tx, ty], "resource": veg, "yield": wood_yield})
 
-            if held:
-                self._reduce_durability(agent, held)
+            if held_tool:
+                self._reduce_durability(agent, held_tool)
             return {"type": "chop", "success": True, "detail": f"采集木质×{wood_yield}"}
         elif veg == 'rubble':
+            wood_yield = 1
+            # Apply efficiency formula to rubble clearing too
+            held_tool = self.get_held_tool(agent)
+            tool_info = TOOLS.get(held_tool, {}) if held_tool else None
+            chop_bonus = tool_info["bonus"] if tool_info else TOOL_BONUS.get(None, 0.0)
+            con_modifier = {1: 1.0, 2: 1.2, 3: 1.5}.get(agent.constitution, 1.0)
+            stone_yield = max(1, int(wood_yield * (1 + chop_bonus) * con_modifier))
             tile.veg_type = ''
             tile.veg_yield = 0
             agent.energy -= ENERGY_CHOP
-            self.add_item(agent, "stone", 1)
-            self._log_event("agent_chop", {"agent_id": agent.agent_id, "position": [tx, ty], "resource": "rubble", "yield": 1})
-            return {"type": "chop", "success": True, "detail": "清理碎石，获得石料×1"}
+            self.add_item(agent, "stone", stone_yield)
+            self._log_event("agent_chop", {"agent_id": agent.agent_id, "position": [tx, ty], "resource": "rubble", "yield": stone_yield})
+
+            if held_tool:
+                self._reduce_durability(agent, held_tool)
+            return {"type": "chop", "success": True, "detail": f"清理碎石，获得石料×{stone_yield}"}
 
         return {"type": "chop", "success": False, "error_code": "INVALID_TARGET", "detail": "该格无可采集植被"}
 
@@ -996,8 +1062,9 @@ class World:
             "attacker_name": agent.agent_name, "damage": final_dmg,
             "hp_remaining": max(0, target.health),
         })
-        # R-1: Interrupt target's crafting
+        # R-1: Interrupt target's crafting and pod actions
         self._interrupt_crafting(target)
+        self._cancel_pod_action(target)
 
         if weapon and weapon.get("id"):
             self._reduce_durability(agent, weapon["id"])
@@ -1161,6 +1228,71 @@ class World:
             return {"type": "use", "success": True, "detail": "辐射效果已消除"}
         return {"type": "use", "success": False, "error_code": "INVALID_TARGET", "detail": f"不可使用的物品: {item_id}"}
 
+    def _do_fuel_power_node(self, agent: AgentState, action: dict) -> dict:
+        """Fuel a power node with organic materials or uranium ore."""
+        # Find power node at agent's position
+        tile = self.get_tile(agent.position.x, agent.position.y)
+        if not tile or not tile.structure or tile.structure.building_type != BuildingType.POWER_NODE:
+            return {"type": "fuel_power_node", "success": False, "error_code": "STRUCTURE_NOT_FOUND",
+                    "detail": "需站在能源节点所在格"}
+
+        pn_id = f"pn-{tile.structure.structure_id}"
+        pn = self.power_nodes.get(pn_id)
+        if not pn:
+            return {"type": "fuel_power_node", "success": False, "error_code": "STRUCTURE_NOT_FOUND",
+                    "detail": "能源节点数据异常"}
+
+        if agent.energy < 1:
+            return {"type": "fuel_power_node", "success": False, "error_code": "INSUFFICIENT_ENERGY",
+                    "detail": "能量不足(需1点能量操作)"}
+
+        item_id = action.get("item_id", "")
+        amount = action.get("amount", 1)
+        if amount < 1:
+            return {"type": "fuel_power_node", "success": False, "error_code": "INVALID_TARGET",
+                    "detail": "燃料数量无效"}
+
+        # Fuel value map
+        fuel_values = {"wood": 10, "organic_fiber": 10, "organic_fuel": 10, "uranium_ore": 50}
+        if item_id not in fuel_values:
+            return {"type": "fuel_power_node", "success": False, "error_code": "INVALID_TARGET",
+                    "detail": f"不可作为燃料: {item_id}(可用: wood/organic_fiber/organic_fuel/uranium_ore)"}
+
+        fuel_value = fuel_values[item_id]
+
+        # Check if agent has the item
+        if not self.has_item(agent, item_id, amount):
+            return {"type": "fuel_power_node", "success": False, "error_code": "MISSING_MATERIALS",
+                    "detail": f"缺少 {item_id}×{amount}"}
+
+        # Calculate available space in power node
+        available_space = max(POWER_NODE_MAX_ENERGY, pn.capacity) - pn.stored
+        if available_space <= 0:
+            return {"type": "fuel_power_node", "success": False, "error_code": "FULL",
+                    "detail": "能源节点已满"}
+
+        # Limit to available space
+        max_by_space = available_space // fuel_value
+        actual_amount = min(amount, max_by_space)
+        if actual_amount < 1:
+            return {"type": "fuel_power_node", "success": False, "error_code": "FULL",
+                    "detail": f"能源节点剩余空间不足(剩余{available_space}, 每{item_id}提供{fuel_value})"}
+
+        energy_gain = fuel_value * actual_amount
+
+        # Consume items
+        self.remove_item(agent, item_id, actual_amount)
+
+        # Add energy to power node
+        max_cap = max(POWER_NODE_MAX_ENERGY, pn.capacity)
+        pn.stored = min(max_cap, pn.stored + energy_gain)
+
+        # Agent energy cost (operation cost)
+        agent.energy -= 1
+
+        return {"type": "fuel_power_node", "success": True,
+                "detail": f"投入 {item_id}×{actual_amount}，获得{energy_gain}点能量，当前储量{pn.stored}/{max_cap}"}
+
     def _do_craft(self, agent: AgentState, action: dict) -> dict:
         recipe_id = action.get("recipe", "")
         # Find recipe
@@ -1202,6 +1334,12 @@ class World:
             if not self.has_craft_power(agent):
                 return {"type": "craft", "success": False, "error_code": "INSUFFICIENT_ENERGY", "detail": "电力不足"}
 
+            # Consume power immediately at start of crafting
+            power_cost = recipe.get("power", 0)
+            if power_cost > 0:
+                if not self.consume_power(agent, power_cost):
+                    return {"type": "craft", "success": False, "error_code": "INSUFFICIENT_ENERGY", "detail": "电力不足"}
+
         # Multi-tick crafting
         craft_ticks = recipe.get("ticks", 0)
         if craft_ticks > 0:
@@ -1218,10 +1356,6 @@ class World:
         # Consume materials
         for mat, amt in recipe["materials"].items():
             self.remove_item(agent, mat, amt)
-        # Consume power
-        power_cost = recipe.get("power", 0)
-        if power_cost > 0:
-            self.consume_power(agent, power_cost)
         # Produce output
         output_id = recipe.get("output", recipe_id)
         output_amount = recipe.get("amount", 1)
@@ -1239,6 +1373,10 @@ class World:
             return {"type": "build", "success": False, "error_code": "INVALID_TARGET", "detail": "目标超出地图边界"}
         if agent.position.dist(Position(tx, ty)) > 1:
             return {"type": "build", "success": False, "error_code": "OUT_OF_RANGE", "detail": f"目标不在建造范围 (当前:{agent.position.x},{agent.position.y} → 目标:{tx},{ty} 距离:{agent.position.dist(Position(tx, ty))}, 最大范围:1格)"}
+        # Workbench/furnace/power_node must be built on current tile (dist=0)
+        if building_type in ("workbench", "furnace", "power_node") and agent.position.dist(Position(tx, ty)) > 0:
+            return {"type": "build", "success": False, "error_code": "OUT_OF_RANGE",
+                    "detail": "工作台/熔炉/能源节点需建在当前格"}
         if agent.energy < ENERGY_BUILD:
             return {"type": "build", "success": False, "error_code": "INSUFFICIENT_ENERGY", "detail": "能量不足"}
 
@@ -1257,13 +1395,12 @@ class World:
         if tile.structure:
             return {"type": "build", "success": False, "error_code": "TILE_BLOCKED", "detail": "该格已有建筑"}
 
-        # Check if in drop pod shield (no building allowed)
+        # Check if in another agent's drop pod shield (owner may build within own shield per §7.6.2)
         for aid, other in self.agents.items():
             if other.drop_pod_pos and other.drop_pod_deployed:
-                if Position(tx, ty).dist(other.drop_pod_pos) <= DROP_POD_SHIELD_RANGE:
-                    if aid != agent.agent_id or Position(tx, ty) != other.drop_pod_pos:
-                        return {"type": "build", "success": False, "error_code": "TILE_BLOCKED",
-                                "detail": "降落仓护盾范围内不可建造"}
+                if aid != agent.agent_id and Position(tx, ty).dist(other.drop_pod_pos) <= DROP_POD_SHIELD_RANGE:
+                    return {"type": "build", "success": False, "error_code": "TILE_BLOCKED",
+                            "detail": "其他幸存者降落仓护盾范围内不可建造"}
 
         # Check if agent has the building as an inventory item (deploy mode — no material cost)
         deploy_from_inventory = self.has_item(agent, building_type, 1)
@@ -1303,6 +1440,72 @@ class World:
         self._destroy_structure(sid)
         agent.energy -= ENERGY_DISMANTLE
         return {"type": "dismantle", "success": True, "detail": "拆除完成"}
+
+    def _do_dismantle_pod(self, agent: AgentState, action: dict) -> dict:
+        """Start 4-tick pod dismantle process. Shield drops immediately."""
+        if not agent.drop_pod_pos or agent.position.dist(agent.drop_pod_pos) > 0:
+            return {"type": "dismantle_pod", "success": False, "error_code": "OUT_OF_RANGE",
+                    "detail": "需站在降落仓所在格"}
+        if not agent.drop_pod_deployed:
+            return {"type": "dismantle_pod", "success": False, "error_code": "INVALID_TARGET",
+                    "detail": "降落仓未部署"}
+        if agent.status not in (ActionStatus.IDLE,):
+            return {"type": "dismantle_pod", "success": False, "error_code": "BUSY",
+                    "detail": "当前状态无法拆解降落仓"}
+        if agent.energy < ENERGY_DISMANTLE:
+            return {"type": "dismantle_pod", "success": False, "error_code": "INSUFFICIENT_ENERGY",
+                    "detail": "能量不足"}
+
+        # Check 5 free inventory slots for pod parts
+        free_slots = INVENTORY_SLOTS - len(agent.inventory)
+        if free_slots < 5:
+            return {"type": "dismantle_pod", "success": False, "error_code": "INVENTORY_FULL",
+                    "detail": "背包空间不足(需要5个空位放置降落仓组件)"}
+
+        # Shield disappears immediately — generator is packing
+        agent.drop_pod_deployed = False
+
+        # Start dismantling process
+        agent.status = ActionStatus.DISMANTLING
+        agent.action_remaining = DEPLOY_DISMANTLE_TICKS
+        agent.action_data = {}
+        agent.energy -= ENERGY_DISMANTLE
+        return {"type": "dismantle_pod", "success": True, "detail": f"开始拆解降落仓({DEPLOY_DISMANTLE_TICKS}tick)"}
+
+    def _do_deploy_pod(self, agent: AgentState, action: dict) -> dict:
+        """Start 4-tick pod deploy process. Requires 5 pod parts in inventory."""
+        from .config import POD_PARTS
+        # Check all 5 pod parts
+        for part in POD_PARTS:
+            if not self.has_item(agent, part, 1):
+                return {"type": "deploy_pod", "success": False, "error_code": "MISSING_MATERIALS",
+                        "detail": f"缺少{part}(需要全部5个降落仓组件)"}
+
+        if agent.drop_pod_deployed:
+            return {"type": "deploy_pod", "success": False, "error_code": "INVALID_TARGET",
+                    "detail": "降落仓已部署"}
+        if agent.status not in (ActionStatus.IDLE,):
+            return {"type": "deploy_pod", "success": False, "error_code": "BUSY",
+                    "detail": "当前状态无法部署降落仓"}
+        if agent.energy < ENERGY_DISMANTLE:
+            return {"type": "deploy_pod", "success": False, "error_code": "INSUFFICIENT_ENERGY",
+                    "detail": "能量不足"}
+
+        # Check destination tile is valid (current tile must be buildable)
+        tile = self.get_tile(agent.position.x, agent.position.y)
+        if not tile or tile.l1 in IMPASSABLE:
+            return {"type": "deploy_pod", "success": False, "error_code": "TILE_BLOCKED",
+                    "detail": "当前格不可部署降落仓"}
+        if tile.structure:
+            return {"type": "deploy_pod", "success": False, "error_code": "TILE_BLOCKED",
+                    "detail": "当前格已有建筑"}
+
+        # Start deployment process (parts consumed at completion)
+        agent.status = ActionStatus.DEPLOYING
+        agent.action_remaining = DEPLOY_DISMANTLE_TICKS
+        agent.action_data = {}
+        agent.energy -= ENERGY_DISMANTLE
+        return {"type": "deploy_pod", "success": True, "detail": f"开始部署降落仓({DEPLOY_DISMANTLE_TICKS}tick)"}
 
     def _do_repair(self, agent: AgentState, action: dict) -> dict:
         target = action.get("target", {})
@@ -1434,6 +1637,62 @@ class World:
         agent.action_remaining = 0
         self._log_event("craft_interrupted", {"agent_id": agent.agent_id})
 
+    def _cancel_pod_action(self, agent: AgentState):
+        """Cancel pod deploy/dismantle, restoring appropriate state."""
+        if agent.status == ActionStatus.DISMANTLING:
+            # Restore shield — pod was still there
+            agent.drop_pod_deployed = True
+            agent.status = ActionStatus.IDLE
+            agent.action_data = {}
+            agent.action_remaining = 0
+            self._log_event("pod_action_cancelled", {"agent_id": agent.agent_id, "action": "dismantle"})
+        elif agent.status == ActionStatus.DEPLOYING:
+            # Parts not yet consumed (consumed at completion), nothing to restore
+            agent.status = ActionStatus.IDLE
+            agent.action_data = {}
+            agent.action_remaining = 0
+            self._log_event("pod_action_cancelled", {"agent_id": agent.agent_id, "action": "deploy"})
+
+    def _complete_dismantle(self, agent: AgentState):
+        """Complete pod dismantle — remove power node, add parts to inventory."""
+        from .config import POD_PARTS
+        # Remove drop pod power node
+        pod_id = f"pod-{agent.agent_id}"
+        self.power_nodes.pop(pod_id, None)
+
+        # Add 5 pod parts to inventory
+        for part in POD_PARTS:
+            self.add_item(agent, part, 1)
+
+        agent.drop_pod_pos = None
+        agent.status = ActionStatus.IDLE
+        agent.action_data = {}
+        agent.action_remaining = 0
+        self._log_event("pod_dismantled", {"agent_id": agent.agent_id})
+
+    def _complete_deploy(self, agent: AgentState):
+        """Complete pod deploy — consume parts, create power node, bring shield up."""
+        from .config import POD_PARTS
+        # Consume 5 pod parts
+        for part in POD_PARTS:
+            self.remove_item(agent, part, 1)
+
+        # Create drop pod power node
+        pod_id = f"pod-{agent.agent_id}"
+        self.power_nodes[pod_id] = PowerNode(
+            node_id=pod_id, position=agent.position,
+            capacity=DROP_POD_EMERGENCY_CAPACITY,
+            stored=DROP_POD_EMERGENCY_CAPACITY,
+            is_drop_pod=True,
+        )
+
+        agent.drop_pod_pos = Position(agent.position.x, agent.position.y)
+        agent.drop_pod_deployed = True
+        agent.status = ActionStatus.IDLE
+        agent.action_data = {}
+        agent.action_remaining = 0
+        self._log_event("pod_deployed", {"agent_id": agent.agent_id})
+
     def _handle_death(self, agent: AgentState):
         """Handle agent death - drop items, consume backup body."""
         # Drop all items
@@ -1516,8 +1775,11 @@ class World:
         for agent in list(self.agents.values()):
             if not agent.online or agent.is_dead():
                 continue
-            # Enclosure immunity
+            # Enclosure immunity (§7.0.9)
             if self.is_in_enclosure(agent.position.x, agent.position.y):
+                continue
+            # Drop pod shield immunity (§7.9, §7.0 L4 判定优先级)
+            if self._get_shielding_pod(agent.position.x, agent.position.y):
                 continue
 
             # S-1: Area radiation — probability increases with distance from center
@@ -1547,7 +1809,13 @@ class World:
                 resist = ARMORS.get(armor_id, {}).get("radiation_resist", 0) if armor_id else 0
                 dmg = max(1, int(dmg * (1 - resist)))
                 agent.health -= dmg
+                agent.radiation_debuff = True
                 self._log_event("storm_damage", {"agent_id": agent.agent_id, "damage": dmg})
+                self.tick_notifications[agent.agent_id].append({
+                    "type": "radiation_damage", "damage": dmg,
+                    "hp_remaining": agent.health, "source": "radiation_storm",
+                    "detail": f"辐射风暴 -{dmg}HP (进入围合建筑或护盾可免疫)"
+                })
                 if agent.health <= 0:
                     self._handle_death(agent)
 
@@ -1617,6 +1885,17 @@ class World:
                     if recipe_def:
                         self._complete_craft(agent, recipe_id, recipe_def)
 
+        # Advance pod deploy/dismantle
+        for agent in self.agents.values():
+            if agent.status == ActionStatus.DISMANTLING:
+                agent.action_remaining -= 1
+                if agent.action_remaining <= 0:
+                    self._complete_dismantle(agent)
+            elif agent.status == ActionStatus.DEPLOYING:
+                agent.action_remaining -= 1
+                if agent.action_remaining <= 0:
+                    self._complete_deploy(agent)
+
         # Creature AI
         self._advance_creatures()
 
@@ -1627,6 +1906,65 @@ class World:
                 decayed.append(key)
         for key in decayed:
             del self.ground_items[key]
+
+        # Wood regrowth (P2)
+        self._regrow_vegetation()
+
+    # ── Wood Regrowth ───────────────────────────
+    def _regrow_vegetation(self):
+        """P2: Regrow harvested wood tiles if a living wood source is within range."""
+        from .config import TREE_REGROW_TICKS, TREE_REGROW_RANGE, TREE_WOOD_AMOUNT, WOOD_VEG_TYPES
+        if not self._harvested_wood:
+            return
+
+        to_remove: list[tuple[int, int]] = []
+
+        for pos, original_veg in list(self._harvested_wood.items()):
+            x, y = pos
+            tile = self.get_tile(x, y)
+            if not tile:
+                to_remove.append(pos)
+                continue
+
+            # If tile already has vegetation (replanted by another mechanism), stop tracking
+            if tile.veg_type:
+                tile.regrow_timer = None
+                to_remove.append(pos)
+                continue
+
+            # Check if any living wood source exists within TREE_REGROW_RANGE (manhattan)
+            has_nearby_wood = False
+            for dy in range(-TREE_REGROW_RANGE, TREE_REGROW_RANGE + 1):
+                for dx in range(-TREE_REGROW_RANGE, TREE_REGROW_RANGE + 1):
+                    if dx == 0 and dy == 0:
+                        continue
+                    if abs(dx) + abs(dy) > TREE_REGROW_RANGE:
+                        continue
+                    nx, ny = x + dx, y + dy
+                    neighbor = self.get_tile(nx, ny)
+                    if neighbor and neighbor.veg_type in WOOD_VEG_TYPES and neighbor.veg_yield > 0:
+                        has_nearby_wood = True
+                        break
+                if has_nearby_wood:
+                    break
+
+            if has_nearby_wood:
+                if tile.regrow_timer is None:
+                    tile.regrow_timer = 0
+                tile.regrow_timer += 1
+                if tile.regrow_timer >= TREE_REGROW_TICKS:
+                    # Regrow the vegetation
+                    tile.veg_type = original_veg
+                    tile.veg_yield = TREE_WOOD_AMOUNT
+                    tile.regrow_timer = None
+                    to_remove.append(pos)
+                    self._log_event("veg_regrow", {"position": [x, y], "veg_type": original_veg})
+            else:
+                # No living wood nearby — reset timer
+                tile.regrow_timer = 0
+
+        for pos in to_remove:
+            self._harvested_wood.pop(pos, None)
 
     def _advance_creatures(self):
         """Creature spawning and AI advancement."""
@@ -1708,6 +2046,7 @@ class World:
                     "hp_remaining": max(0, target_agent.health),
                 })
                 self._interrupt_crafting(target_agent)
+                self._cancel_pod_action(target_agent)
                 self._log_event("creature_attack", {
                     "creature_id": creature.creature_id, "creature_type": creature.creature_type,
                     "target": target_agent.agent_id, "damage": damage,

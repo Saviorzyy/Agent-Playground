@@ -261,12 +261,12 @@ ACTIONS_GUIDE = """## 可用行动
 
 | 行动 | 参数 | 能量 |
 |------|------|------|
-| move | direction:"north"|"south"|"east"|"west" | 1 |
+| move | direction:"north"|"south"|"east"|"west" | 0(免费) |
 | mine | target:{x,y} | 2 |
 | chop | target:{x,y} | 2 |
 | craft | recipe:"配方ID" | 3 |
 | build | building_type, target:{x,y} | 5 |
-| rest | — | +3恢复 |
+| rest | — | +8恢复 |
 | scan | — | 2 |
 | inspect | target:"inventory"|"self"|"recipes"|"map" | 0 |
 | equip | item_id, slot:"main_hand" | 0 |
@@ -278,6 +278,12 @@ ACTIONS_GUIDE = """## 可用行动
 | use | item_id:"repair_kit"|"battery"|"radiation_antidote" | 1 |
 | attack | target_agent:"id" 或 target_creature:"id" | 2~5 |
 
+## 核心规则
+- **建筑阻挡移动和视线**：墙壁、关闭的门不可穿越
+- **石料阻挡移动**：L2石料矿层阻挡通行，需先mine开采
+- **围合建筑免疫辐射**：由墙壁和门围成的封闭空间内免疫辐射伤害
+- **降落仓提供应急电力**：护盾范围3格内可为工作台/熔炉供电
+
 ## 核心策略
 - **使用 ember_step 一步完成**：等tick + 提交行动 + 获取结果，一次调用搞定
 - **教程阶段**：优先执行"推荐行动"（suggested_actions），可一字不差地照搬
@@ -286,7 +292,7 @@ ACTIONS_GUIDE = """## 可用行动
 - 能量<30时加入 rest
 - 视野中的生物可被攻击: [{"type":"attack","target_creature":"cre-0"}]
 - 击杀生物掉落资源，优先攻击灰烬爬虫
-- 辐射风暴时-2HP/tick，尽快进入围合建筑避难"""
+- 辐射风暴时-2HP/tick，尽快用墙壁+门围合封闭空间避难"""
 
 
 def _fmt_events(events: list[dict]) -> str:
@@ -548,8 +554,16 @@ def create_mcp_server(game: GameClient) -> Server:
                             actions.append({"type": "mine", "target": {"x": sx, "y": sy}})
                         if _rnd.random() < 0.3:
                             actions.append({"type": "rest"})
-                    else:  # explore — direction-persistent with resource seeking
-                        # Pick a primary direction and persist (avoid random walk)
+                    else:  # explore — persistent direction with resource seeking
+                        # Track position from results (more accurate than game.state)
+                        current_pos = getattr(game, '_play_pos', None)
+                        if current_pos is None:
+                            pos = game.state.get("position", [100, 100])
+                            current_pos = [pos[0], pos[1]]
+                            game._play_pos = current_pos
+
+                        # Get or initialize persistent direction
+                        explore_dir = getattr(game, '_play_dir', None)
                         explore_dirs = ["north", "south", "east", "west"]
 
                         # Try to move toward nearest visible resource
@@ -558,9 +572,7 @@ def create_mcp_server(game: GameClient) -> Server:
                         res_matches = re.findall(r'(?:石料|灌木|灰木树|壁生苔|铁矿|铜矿).*?\((\d+),(\d+)\)', user_msg)
                         if res_matches:
                             rx, ry = int(res_matches[0][0]), int(res_matches[0][1])
-                            # Parse current position from tick frame
-                            pos = game.state.get("position", [0, 0])
-                            cx, cy = pos[0], pos[1]
+                            cx, cy = current_pos[0], current_pos[1]
                             dx = rx - cx
                             dy = ry - cy
                             if abs(dx) > abs(dy):
@@ -569,11 +581,10 @@ def create_mcp_server(game: GameClient) -> Server:
                                 target_dir = "south" if dy > 0 else "north"
 
                         if target_dir:
-                            d1 = target_dir
-                        else:
-                            # Pick a random direction but bias away from map edges
-                            pos = game.state.get("position", [100, 100])
-                            cx, cy = pos[0], pos[1]
+                            explore_dir = target_dir
+                        elif explore_dir is None:
+                            # Initialize — bias away from map edges
+                            cx, cy = current_pos[0], current_pos[1]
                             weights = []
                             for d in explore_dirs:
                                 if d == "north": w = max(cy, 10)
@@ -581,9 +592,10 @@ def create_mcp_server(game: GameClient) -> Server:
                                 elif d == "west": w = max(cx, 10)
                                 else: w = max(199 - cx, 10)
                                 weights.append(w)
-                            d1 = _rnd.choices(explore_dirs, weights=weights, k=1)[0]
+                            explore_dir = _rnd.choices(explore_dirs, weights=weights, k=1)[0]
 
-                        actions = [{"type": "move", "direction": d1}] * 3
+                        game._play_dir = explore_dir
+                        actions = [{"type": "move", "direction": explore_dir}] * 2
                         if _rnd.random() < 0.3:
                             actions.append({"type": "scan"})
 
@@ -591,11 +603,22 @@ def create_mcp_server(game: GameClient) -> Server:
                     for r in result.get("results", []):
                         if r.get("success"):
                             t = r.get("type", "")
-                            if t == "move": summary["moves"] += 1
+                            if t == "move":
+                                summary["moves"] += 1
+                                # Track position from move result
+                                detail = r.get("detail", "")
+                                import re as _re
+                                m = _re.search(r'\((\d+),\s*(\d+)\)', detail)
+                                if m and hasattr(game, '_play_pos'):
+                                    game._play_pos[0] = int(m.group(1))
+                                    game._play_pos[1] = int(m.group(2))
                             elif t == "chop": summary["chops"] += 1; summary["wood"] += 1
                             elif t == "mine": summary["mines"] += 1; summary["stone"] += 1
                             elif t == "rest": summary["rests"] += 1
                             elif t == "scan": summary["scans"] += 1
+                        elif r.get("type") == "move" and r.get("error_code") == "BLOCKED":
+                            # Change direction when blocked
+                            game._play_dir = _rnd.choice([d for d in explore_dirs if d != game._play_dir])
 
                 end_energy = game.state.get("energy", 100)
 
@@ -605,6 +628,9 @@ def create_mcp_server(game: GameClient) -> Server:
                         f = game._tick_q.get_nowait()
                         if "state" in f:
                             game._state = f["state"]
+                            pos = f["state"].get("position")
+                            if pos:
+                                game._play_pos = [pos[0], pos[1]]
                     except asyncio.QueueEmpty:
                         break
 
@@ -621,7 +647,7 @@ def create_mcp_server(game: GameClient) -> Server:
                     f"| 探测 | {summary['scans']} |",
                     f"",
                     f"### 最终状态",
-                    f"- 位置: {game.state.get('position', '?')}",
+                    f"- 位置: {getattr(game, '_play_pos', game.state.get('position', '?'))}",
                     f"- HP: {game.state.get('health', '?')}/{game.state.get('max_health', '?')}",
                     f"- 能量: {game.state.get('energy', '?')}/100",
                     f"- 背包: {game.state.get('inventory_summary', '?')}",

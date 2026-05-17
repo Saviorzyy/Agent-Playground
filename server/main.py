@@ -12,9 +12,10 @@ import aiohttp_cors
 from .world import World
 from .models import ActionStatus
 from .ws_handler import WSManager
-from .http_routes import handle_register, handle_status, handle_map_data, handle_agents_list, handle_agent_detail, handle_actions_log, handle_events
+from .http_routes import handle_register, handle_status, handle_map_data, handle_agents_list, handle_agent_detail, handle_actions_log, handle_events, handle_rotate_token
+from .sse_handler import SSEManager, handle_sse_stream
 from .db import init_db, save_snapshot, load_latest_snapshot, read_wal_after, truncate_wal
-from .config import MAP_SEED, TICK_INTERVAL, TICK_CADENCE, HEARTBEAT_INTERVAL, HEARTBEAT_MAX_MISS
+from .config import MAP_SEED, TICK_INTERVAL, TICK_CADENCE, HEARTBEAT_INTERVAL, HEARTBEAT_MAX_MISS, STORM_WARNING_TICKS
 
 
 class GameServer:
@@ -24,6 +25,7 @@ class GameServer:
         self.data_dir = data_dir
         self.world = World(seed=seed)
         self.ws_manager = WSManager(self.world)
+        self.sse_manager = SSEManager()
         self._running = False
         self._tick = 0
 
@@ -50,6 +52,7 @@ class GameServer:
         """Start the game server."""
         app = web.Application()
         app["world"] = self.world
+        app["sse_manager"] = self.sse_manager
 
         # CORS
         cors = aiohttp_cors.setup(app, defaults={
@@ -66,6 +69,8 @@ class GameServer:
         app.router.add_get("/api/v1/agents/{agent_id}", handle_agent_detail)
         app.router.add_get("/api/v1/actions", handle_actions_log)
         app.router.add_get("/api/v1/events", handle_events)
+        app.router.add_get("/api/v1/events/stream", handle_sse_stream)
+        app.router.add_post("/api/v1/auth/rotate-token", handle_rotate_token)
 
         # WebSocket route
         app.router.add_get("/ws/game", self.ws_manager.handle_connection)
@@ -129,6 +134,12 @@ class GameServer:
                 for aid, notifs in list(self.world.tick_notifications.items()):
                     for notif in notifs:
                         await self.ws_manager.send_event(aid, notif.get("type", "event"), notif)
+
+                # Broadcast SSE events to web frontend subscribers
+                try:
+                    await self.sse_manager.broadcast_tick(self.world)
+                except Exception as e:
+                    print(f"  [SSE ERROR] tick {self._tick}: {e}")
 
             except Exception as e:
                 print(f"  [TICK ERROR] tick {self._tick}: {e}")
@@ -267,7 +278,7 @@ class GameServer:
         # Show drop pod power info
         if agent.drop_pod_pos and agent.drop_pod_deployed:
             pod_dist = agent.position.dist(agent.drop_pod_pos)
-            from .config import DROP_POD_SHIELD_RANGE, POWER_CRAFT_COST
+            from .config import DROP_POD_SHIELD_RANGE, POWER_CRAFT_COST, CENTER_Y
             # Find drop pod power node
             pod_id = f"pod-{agent.agent_id}"
             pod_power = world.power_nodes.get(pod_id)
@@ -467,11 +478,29 @@ class GameServer:
         if world.weather.value == "radiation_storm":
             lines.append(f"\n【天气】☢️ 辐射风暴 (剩余{world.weather_remaining} tick) - 暴露者-2HP/tick")
         elif world.weather_warning_sent:
-            lines.append(f"\n【天气】⚠️ 辐射风暴预警 - {STORM_WARNING_TICKS} tick后到达")
+            remaining = getattr(world, 'weather_warning_countdown', STORM_WARNING_TICKS)
+            lines.append(f"\n【天气】⚠️ 辐射风暴预警 - {remaining} tick后到达")
 
         # Energy warning
         if agent.energy <= 10:
             lines.append(f"\n⚠️ 能量即将耗尽！请 rest 或使用电池。")
+
+        # Radiation status — check enclosure first, then shield, then exposed
+        in_enclosure = world.is_in_enclosure(pos.x, pos.y)
+        in_shield = world._get_shielding_pod(pos.x, pos.y) is not None
+        if in_enclosure:
+            lines.append(f"\n🛡 辐射防护 — 你在围合建筑内，免疫辐射伤害")
+        elif in_shield:
+            lines.append(f"\n🛡 辐射防护 — 你在降落仓护盾内，免疫辐射伤害")
+        elif world.weather.value == "radiation_storm":
+            w = abs(pos.y - CENTER_Y) / max(1, CENTER_Y)
+            rad_prob = round(0.30 * w * 100)
+            lines.append(f"\n☢️ 辐射暴露中！风暴辐射 -2HP/tick，区域辐射概率{rad_prob}%。进入围合建筑或护盾避难！")
+        else:
+            w = abs(pos.y - CENTER_Y) / max(1, CENTER_Y)
+            rad_prob = round(0.30 * w * 100)
+            if rad_prob > 0:
+                lines.append(f"\n☢️ 辐射暴露 — 区域辐射概率{rad_prob}%（距中心越远越强），进入围合建筑或护盾可免疫")
 
         lines.append(f"\n请决定你的行动。以JSON数组格式返回，如: [{{\"type\": \"move\", \"direction\": \"north\"}}]")
 
