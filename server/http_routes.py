@@ -139,6 +139,7 @@ async def handle_map_data(request: web.Request) -> web.Response:
                     "ore": tile.ore_type if tile.ore_exposed else "",
                     "veg": tile.veg_type,
                     "structure": tile.structure.building_type.value if tile.structure else "",
+                    "ground": tile.ground.items[:] if tile.ground and tile.ground.items else [],
                 })
         tiles.append(row)
 

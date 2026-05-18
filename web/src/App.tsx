@@ -12,9 +12,17 @@ interface Agent {
   health: number
   max_health: number
   energy: number
+  max_energy: number
   online: boolean
   held: string
+  off_hand: string | null
+  armor: string | null
+  backup_count: number
   tutorial_phase: number | null
+  drop_pod_pos: [number, number] | null
+  drop_pod_deployed: boolean
+  attributes: { PER: number; CON: number; AGI: number }
+  status: string
 }
 
 interface ServerStatus {

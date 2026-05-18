@@ -2,8 +2,11 @@ import { useState, useEffect } from 'react'
 
 interface Agent {
   agent_id: string; name: string; position: [number, number]
-  health: number; max_health: number; energy: number
-  online: boolean; held: string; tutorial_phase: number | null
+  health: number; max_health: number; energy: number; max_energy: number
+  online: boolean; held: string; off_hand: string | null; armor: string | null
+  backup_count: number; tutorial_phase: number | null
+  attributes: { PER: number; CON: number; AGI: number }
+  status: string
 }
 
 interface AgentDetail {
@@ -113,7 +116,7 @@ export default function AgentPanel({ agent }: AgentPanelProps) {
 
   const d = detail
   const hpPct = agent.max_health > 0 ? (agent.health / agent.max_health) * 100 : 0
-  const energyPct = (agent.energy / 100) * 100
+  const energyPct = agent.max_energy > 0 ? (agent.energy / agent.max_energy) * 100 : 0
 
   return (
     <div style={{ padding: 16, flex: 1, overflow: 'auto' }}>
@@ -136,7 +139,7 @@ export default function AgentPanel({ agent }: AgentPanelProps) {
         </div>
         <div style={{ marginBottom: 8 }}>
           <span style={{ color: '#888' }}>⚡ 能量 </span>
-          <span style={{ fontSize: 10 }}>{agent.energy}/100</span>
+          <span style={{ fontSize: 10 }}>{agent.energy}/{agent.max_energy || 100}</span>
           <div style={{ background: '#1a1e2a', height: 8, borderRadius: 3, overflow: 'hidden', marginTop: 1 }}>
             <div style={{ width: `${energyPct}%`, height: '100%', background: '#00d4aa' }} />
           </div>
@@ -150,6 +153,10 @@ export default function AgentPanel({ agent }: AgentPanelProps) {
           <>
             <div style={{ marginBottom: 4, color: '#aaa' }}>
               PER:{d.attributes.PER} CON:{d.attributes.CON} AGI:{d.attributes.AGI}
+            </div>
+            <div style={{ marginBottom: 4, fontSize: 11, color: '#888' }}>
+              👁 视野 {4 + d.attributes.PER * 2}格 (夜 {2 + d.attributes.PER * 2}格) |
+              🚶 移速 {Math.floor((d.attributes.AGI + 1) / 2)}格/tick
             </div>
             <div style={{ marginBottom: 4 }}>
               🛡 {d.armor || '无护甲'} | 🔧 {d.off_hand || '副手空'}

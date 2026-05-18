@@ -930,6 +930,8 @@ class World:
             picked.append(f"{item_id}×{amount}")
         del self.ground_items[key]
         agent.energy -= ENERGY_PICKUP
+        self._log_change("item_pickup", agent_id=agent.agent_id,
+                         tile=(x, y), items=picked)
         return {"type": "pickup", "success": True, "detail": f"拾取: {', '.join(picked)}"}
 
     def _do_drop(self, agent: AgentState, action: dict) -> dict:
@@ -939,6 +941,8 @@ class World:
             return {"type": "drop", "success": False, "error_code": "INVENTORY_FULL", "detail": "背包中无此物品或数量不足"}
         self.remove_item(agent, item_id, amount)
         self._add_ground_item(agent.position.x, agent.position.y, item_id, amount)
+        self._log_change("item_drop", agent_id=agent.agent_id, item=item_id, amount=amount,
+                         tile=(agent.position.x, agent.position.y))
         return {"type": "drop", "success": True, "detail": f"丢弃 {item_id}×{amount}"}
 
     def _do_rest(self, agent: AgentState, action: dict) -> dict:

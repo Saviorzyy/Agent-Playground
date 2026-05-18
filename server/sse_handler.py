@@ -99,7 +99,7 @@ class SSEManager:
         # ── map_update (structures / creatures / tiles) ──
         map_keys = {"structure_built", "structure_destroyed", "resource_deplete",
                     "weather_change", "day_phase", "creature_spawned",
-                    "creature_killed"}
+                    "creature_killed", "item_drop", "item_pickup"}
         if change_types & map_keys:
             structs = []
             for sid, s in world.structures.items():
@@ -116,11 +116,11 @@ class SSEManager:
                     "x": c.position.x, "y": c.position.y,
                     "hp": c.hp, "max_hp": c.max_hp,
                 })
-            # Collect tile changes (resource depletion, veg changes)
+            # Collect tile changes (resource depletion, veg changes, item drop/pickup)
             tiles = []
             for c in world.changes:
                 ct = c.get("type")
-                if ct == "resource_deplete":
+                if ct in ("resource_deplete", "item_drop", "item_pickup"):
                     tile_pos = c.get("tile")
                     if tile_pos:
                         tx, ty = tile_pos
@@ -134,6 +134,7 @@ class SSEManager:
                                 "ore": tile.ore_type if tile.ore_exposed else "",
                                 "veg": tile.veg_type,
                                 "structure": tile.structure.building_type.value if tile.structure else "",
+                                "ground": tile.ground.items[:] if tile.ground and tile.ground.items else [],
                             })
             await self.broadcast("map_update", {
                 "structures": structs,

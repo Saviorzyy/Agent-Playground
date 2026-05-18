@@ -5,9 +5,17 @@ interface Agent {
   health: number
   max_health: number
   energy: number
+  max_energy: number
   online: boolean
   held: string
+  off_hand: string | null
+  armor: string | null
+  backup_count: number
   tutorial_phase: number | null
+  drop_pod_pos: [number, number] | null
+  drop_pod_deployed: boolean
+  attributes: { PER: number; CON: number; AGI: number }
+  status: string
 }
 
 interface Props {
@@ -75,12 +83,20 @@ export default function AgentList({ agents, selectedAgent, onSelectAgent }: Prop
               <div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10 }}>
                   <span style={{ color: '#ccc' }}>能量</span>
-                  <span style={{ color: '#00d4aa' }}>{agent.energy}/100</span>
+                  <span style={{ color: '#00d4aa' }}>{agent.energy}/{agent.max_energy || 100}</span>
                 </div>
                 <div style={{ ...barStyle, background: '#333', overflow: 'hidden' }}>
                   <div style={{ ...barStyle, width: `${Math.max(0, enPct * 100)}%`, background: '#00d4aa', margin: 0 }} />
                 </div>
               </div>
+              {agent.attributes && (
+                <div style={{ marginTop: 4, fontSize: 9, color: '#888', display: 'flex', gap: 8 }}>
+                  <span>PER {agent.attributes.PER}</span>
+                  <span>CON {agent.attributes.CON}</span>
+                  <span>AGI {agent.attributes.AGI}</span>
+                  <span style={{ color: '#666' }}>| {agent.held || '空手'}</span>
+                </div>
+              )}
             </div>
           )
         })}

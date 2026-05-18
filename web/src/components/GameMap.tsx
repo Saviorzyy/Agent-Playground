@@ -2,9 +2,12 @@ import { useRef, useEffect, useCallback, useState } from 'react'
 
 interface Agent {
   agent_id: string; name: string; position: [number, number]
-  health: number; max_health: number; energy: number
-  online: boolean; held: string
-  tutorial_phase: number | null
+  health: number; max_health: number; energy: number; max_energy: number
+  online: boolean; held: string; off_hand: string | null; armor: string | null
+  backup_count: number; tutorial_phase: number | null
+  drop_pod_pos: [number, number] | null; drop_pod_deployed: boolean
+  attributes: { PER: number; CON: number; AGI: number }
+  status: string
 }
 
 interface GameMapProps {
@@ -79,6 +82,21 @@ const CREATURE_COLORS: Record<string, string> = {
 const CREATURE_LABELS: Record<string, string> = {
   ash_crawler: '灰烬爬虫', rock_spider: '岩石蛛', dryad_ape: '树猿', swamp_worm: '沼泽虫',
 }
+const ITEM_NAMES: Record<string, string> = {
+  workbench: '工作台', furnace: '熔炉', organic_fuel: '有机燃料',
+  stone: '石料', wood: '木质', building_block: '建材方块',
+  raw_copper: '铜矿', raw_iron: '铁矿', raw_gold: '金矿', uranium_ore: '铀矿',
+  copper_ingot: '铜碇', iron_ingot: '铁碇', gold_ingot: '金碇',
+  carbon: '碳', silicon: '硅', wire: '电线', carbon_fiber: '碳纤维',
+  basic_excavator: '基础采掘器', standard_excavator: '标准采掘器', heavy_excavator: '重型采掘器',
+  cutter: '切割器',
+  plasma_cutter_mk1: '等离子刀Mk.I', plasma_cutter_mk2: '等离子刀Mk.II', plasma_cutter_mk3: '等离子刀Mk.III',
+  pulse_emitter_mk1: '脉冲发射器Mk.I', pulse_emitter_mk2: '脉冲发射器Mk.II', pulse_emitter_mk3: '脉冲发射器Mk.III',
+  radiation_armor: '辐射防护服', searchlight: '探照灯', signal_amplifier: '信号放大器',
+  repair_kit: '修理包', battery: '电池', radiation_antidote: '辐射药剂',
+  copper_coin: '铜币', iron_coin: '铁币', gold_coin: '金币',
+  acid_blood: '酸性血液', organic_toxin: '有机毒物', organic_fiber: '有机纤维',
+}
 
 export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent, weather, dayPhase = 'day', events = [] }: GameMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -134,7 +152,15 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent,
         const [ax, ay] = agent.position
         const cx = ox + ax * tileSize + tileSize / 2
         const cy = oy + ay * tileSize + tileSize / 2
-        const radius = 5 * tileSize
+        // Night vision formula matching server: day=4+PER*2, night=2+PER*2, storm=-2
+      const getViewRange = (agent: Agent, phase: string, wthr: string) => {
+        const per = agent.attributes?.PER ?? 1
+        let base = phase === 'night' ? 2 + per * 2 : 4 + per * 2
+        if (wthr === 'radiation_storm') base -= 2
+        return Math.max(1, base)
+      }
+      const vr = getViewRange(agent, dayPhase, weather)
+      const radius = vr * tileSize
         const grad = nctx.createRadialGradient(cx, cy, 0, cx, cy, radius)
         grad.addColorStop(0, 'rgba(255,255,255,1)')
         grad.addColorStop(0.4, 'rgba(255,255,255,0.95)')
@@ -444,6 +470,22 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent,
             ctx.fillStyle = (VEG_COLORS[tile.veg] || '#0f0') + '99'
             ctx.fillRect(px, py, tileSize, tileSize)
           }
+          // Ground items (dropped items)
+          if (tile.ground && tile.ground.length > 0) {
+            const dotR = Math.max(2, tileSize * 0.12)
+            for (let gi = 0; gi < Math.min(tile.ground.length, 4); gi++) {
+              const [gid] = tile.ground[gi]
+              const gx = px + tileSize * (0.2 + 0.25 * (gi % 2))
+              const gy = py + tileSize * (0.2 + 0.25 * Math.floor(gi / 2))
+              ctx.beginPath()
+              ctx.arc(gx, gy, dotR, 0, Math.PI * 2)
+              ctx.fillStyle = gid === 'stone' ? '#999' : gid.includes('ore') ? '#d27d2d' : gid.includes('ingot') ? '#bf8' : gid === 'wood' ? '#6a4' : '#ffd728'
+              ctx.fill()
+              ctx.strokeStyle = 'rgba(255,255,255,0.3)'
+              ctx.lineWidth = 0.5
+              ctx.stroke()
+            }
+          }
           if (tile.structure && STRUCT_COLORS[tile.structure]) {
             ctx.fillStyle = STRUCT_COLORS[tile.structure]
             ctx.fillRect(px, py, tileSize, tileSize)
@@ -596,6 +638,23 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent,
       ctx.strokeStyle = '#00d4aa'
       ctx.lineWidth = 2
       ctx.strokeRect(ox + sx * tileSize - 2, oy + sy * tileSize - 2, tileSize + 4, tileSize + 4)
+      // View range circle (daytime: 4+PER*2, storm -2)
+      if (selectedAgent.attributes) {
+        const per = selectedAgent.attributes.PER
+        const vr = weather === 'radiation_storm' ? Math.max(1, 4 + per * 2 - 2) : 4 + per * 2
+        const scx = ox + sx * tileSize + tileSize / 2
+        const scy = oy + sy * tileSize + tileSize / 2
+        ctx.beginPath()
+        ctx.arc(scx, scy, vr * tileSize, 0, Math.PI * 2)
+        ctx.strokeStyle = 'rgba(0, 212, 170, 0.2)'
+        ctx.lineWidth = 1
+        ctx.setLineDash([4, 6])
+        ctx.stroke()
+        ctx.setLineDash([])
+        ctx.fillStyle = 'rgba(0, 212, 170, 0.35)'
+        ctx.font = `${Math.max(7, 9 * zoom)}px monospace`
+        ctx.fillText(`👁 ${vr}`, scx + 4, scy - vr * tileSize + 12)
+      }
     }
 
     // --- OVERLAYS (drawn on top of game world) ---
@@ -844,6 +903,16 @@ export default function GameMap({ mapData, agents, selectedAgent, onSelectAgent,
           )}
           {hover.tile.structure && (
             <div style={{ marginLeft: 16, color: '#0ff' }}>🏗 {STRUCT_LABELS[hover.tile.structure]}</div>
+          )}
+          {hover.tile.ground && hover.tile.ground.length > 0 && (
+            <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #2a3040' }}>
+              <div style={{ color: '#ffd728', fontSize: 10, marginBottom: 2 }}>📦 地面物品</div>
+              {hover.tile.ground.map((g: [string, number], i: number) => (
+                <div key={i} style={{ marginLeft: 12, fontSize: 10, color: '#ccc' }}>
+                  {ITEM_NAMES[g[0]] || g[0]} ×{g[1]}
+                </div>
+              ))}
+            </div>
           )}
           {hover.agents.length > 0 && (
             <div style={{ marginTop: 4, paddingTop: 4, borderTop: '1px solid #2a3040' }}>
